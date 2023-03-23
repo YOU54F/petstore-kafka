@@ -13,6 +13,8 @@
     "test:watch": "jest --watch"
   },
   "devDependencies": {
-    "jest": "^28.1.1"
+    "@pact-foundation/pact": "^11.0.2",
+    "jest": "^28.1.1",
+    "uuid": "^9.0.0"
   }
 }

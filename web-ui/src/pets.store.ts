@@ -2,7 +2,7 @@ import create from 'zustand'
 import { onMessage } from './websocket'
 import {arrayToObject} from './utils'
 
-interface Pet {
+export interface Pet {
   id: string;
   name: string;
   location?: string;

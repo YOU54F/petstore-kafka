@@ -1,0 +1,115 @@
+{
+  "consumer": {
+    "name": "web-ui"
+  },
+  "interactions": [
+    {
+      "description": "A request to create a pet called foo",
+      "providerStates": [
+        {
+          "name": "a pet called foo does not exist"
+        }
+      ],
+      "request": {
+        "body": {
+          "location": "Plett",
+          "name": "foo"
+        },
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "matchingRules": {
+          "body": {
+            "$.location": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.name": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            }
+          }
+        },
+        "method": "POST",
+        "path": "/pets"
+      },
+      "response": {
+        "status": 201
+      }
+    },
+    {
+      "description": "A request to get pets",
+      "providerStates": [
+        {
+          "name": "some pets exist",
+          "params": {
+            "location": "Plett",
+            "status": "available"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "path": "/pets",
+        "query": {
+          "location": [
+            "Plett"
+          ],
+          "status": [
+            "available"
+          ]
+        }
+      },
+      "response": {
+        "body": [
+          {
+            "id": "6c9f429c-3f5d-4a55-88bf-026b2b404710",
+            "location": "Plett",
+            "name": "Max",
+            "status": "available"
+          }
+        ],
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "matchingRules": {
+          "body": {
+            "$": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type",
+                  "min": 1
+                }
+              ]
+            }
+          }
+        },
+        "status": 200
+      }
+    }
+  ],
+  "metadata": {
+    "pact-js": {
+      "version": "11.0.2"
+    },
+    "pactRust": {
+      "ffi": "0.4.0",
+      "models": "1.0.4"
+    },
+    "pactSpecification": {
+      "version": "3.0.0"
+    }
+  },
+  "provider": {
+    "name": "pets-service"
+  }
+}

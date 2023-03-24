@@ -1,0 +1,42 @@
+name: Node.js CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        node-version: [16.x]
+    
+    env:
+        PACT_DO_NOT_TRACK: true
+
+    steps:
+      - uses: actions/checkout@v3
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v3
+        with:
+          node-version: ${{ matrix.node-version }}
+      - name: Install `yarn` for local simulations
+        run: npm i -g yarn
+        if: ${{ env.ACT }}
+      - uses: KengoTODA/actions-setup-docker-compose@v1
+        name: Install `docker-compose` for local simulations
+        if: ${{ env.ACT }}
+        with:
+          version: '2.17.0'
+      - run: cd web-ui && yarn
+      - run: cd web-ui && yarn test
+      - run: cd services/lib && yarn
+      - run: cd services/pets && yarn
+      - run: cd services/lib && yarn test
+      - run: cd services/kafka && docker-compose up -d
+      - run: cd services/lib && yarn run pact:verify
+      - run: cd services/kafka && docker-compose down
+        if: always()

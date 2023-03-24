@@ -166,29 +166,33 @@ signalTraps.forEach(type => {
 
 
 async function shutdown() {
-  await Promise.all(consumers.map(consumer => consumer.disconnect()))
+  await Promise.all([producer.disconnect(), consumers.map(consumer => consumer.disconnect())])
 
-  // server.close(() => {
-  //   console.log('Closed out remaining connections');
-  //   process.exit(0);
-  // });
+  server.close(() => {
+    console.log('Closed out remaining connections');
+    process.exit(0);
+  });
 
-  // setTimeout(() => {
-  //   console.error('Could not close connections in time, forcefully shutting down');
-  //   process.exit(1);
-  // }, 5000);
+  setTimeout(() => {
+    console.error('Could not close connections in time, forcefully shutting down');
+    process.exit(1);
+  }, 5000);
 
-  // connections.forEach(curr => curr.end());
-  // setTimeout(() => connections.forEach(curr => curr.destroy()), 5000);
+  connections.forEach(curr => curr.end());
+  setTimeout(() => connections.forEach(curr => curr.destroy()), 5000);
 }
 
 
+ function stopKafkaHelper() {
+	return new Promise((resolve, reject) => {
+		Promise.all([producer.disconnect(), consumers.map(consumer => consumer.disconnect())])
+			.then(() => {resolve()})
+			.catch(error => reject(error))
+	})
+}
 
 module.exports = {
   app,
-  producer,
-  kafka,
-  consumers,
-  shutdown,
-  petsCache
+  petsCache,
+  stopKafkaHelper
 }

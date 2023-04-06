@@ -7,6 +7,9 @@ const uuid = require('uuid')
 const morgan = require('morgan')
 const { Kafka, logLevel,Partitioners } = require('kafkajs')
 const { KafkaSink, KafkaLogger, KafkaStream, FlatDB: { queryObjToMatchQuery } } = require('../lib')
+const {
+  petsCacheProcessor,
+} = require("./processor");
 // Configs
 const KAFKA_HOSTS = (process.env.KAFKA_HOSTS || 'localhost:9092').split(',').map(s => s.trim())
 const DATA_BASEPATH = process.env.DATA_BASEPATH || __dirname
@@ -25,33 +28,23 @@ const kafka = new Kafka({
     retries: 16
   }
 })
-
 const consumers = []
 const producer = kafka.producer({ createPartitioner: Partitioners.DefaultPartitioner })
 producer.connect()
 
 // // Consume kafka
+
 const petsCache = new KafkaSink({
   kafka,
   basePath: DATA_BASEPATH,
   name: 'pets-cache',
   topics: ['pets.added', 'pets.statusChanged'],
   onLog: ({log, topic, sink}) => {
-
-    if(topic === 'pets.added') {
-      console.log(`Adding pet to disk: ${log.id} - ${log.name}`)
-      sink.db.dbPut(log.id, {...log, status: 'pending'})
-      return 
-    }
-
-    if(topic === 'pets.statusChanged') {
-      console.log(`Updating pet status to disk: ${log.id} - ${log.status}`)
-      // Save to DB with new status
-      sink.db.dbMerge(log.id, {status: log.status})
-      return 
-    }
+    petsCacheProcessor({log, topic, db:sink.db})
   }
 })
+
+
 
 new KafkaStream({
   kafka,
@@ -183,16 +176,33 @@ async function shutdown() {
 }
 
 
- function stopKafkaHelper() {
-	return new Promise((resolve, reject) => {
-		Promise.all([producer.disconnect(), consumers.map(consumer => consumer.disconnect())])
-			.then(() => {resolve()})
-			.catch(error => reject(error))
-	})
-}
+ async function stopKafkaHelper() {
+   await new Promise(async (resolve, reject) => {
+     // await Promise.all([consumers.map(consumer => consumer.disconnect())])
+     Promise.all([
+       kafka.consumer({ groupId: "pets-cache" }).disconnect(),
+       kafka.consumer({ groupId: "pets-stream" }).disconnect(),
+     ])
+       .then(() => {
+         console.log("cons disconnected");
+         resolve();
+       })
+       .catch((error) => reject(error));
+   });
+   await new Promise(async (resolve, reject) => {
+     Promise.all([producer.disconnect(), petsCache.admin.disconnect()])
+       .then(() => {
+         console.log("prod disconnected");
+         resolve();
+       })
+       .catch((error) => reject(error));
+   });
+ }
 
 module.exports = {
   app,
   petsCache,
-  stopKafkaHelper
+  stopKafkaHelper,
+  petsCacheProcessor,
+  kafka
 }

@@ -10,7 +10,8 @@
   },
   "scripts": {
     "test": "jest",
-    "pact:verify": "jest --testRegex \"^.+pact.js$\"",
+    "pact:verify": "jest --testRegex \"^.+verify.js$\" --verbose",
+    "pact:pets": "jest --testRegex \"^.+pact.js$\" --verbose",
     "test:watch": "jest --watch"
   },
   "devDependencies": {

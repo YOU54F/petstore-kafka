@@ -36,7 +36,9 @@ jobs:
       - run: cd services/lib && yarn
       - run: cd services/pets && yarn
       - run: cd services/lib && yarn test
+      - run: cd services/lib && yarn run pact:pets
+      - run: cd services/lib && yarn run pact:verify pets.message.verify.js
       - run: cd services/kafka && docker-compose up -d
-      - run: cd services/lib && yarn run pact:verify
+      - run: cd services/lib && yarn run pact:verify pets.rest.verify.js
       - run: cd services/kafka && docker-compose down
         if: always()

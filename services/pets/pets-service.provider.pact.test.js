@@ -36,11 +36,13 @@ function pactSource() {
   }
 
   const { version, branch } = gitInfo()
+  // pact-core validates every auth key that is present, even an undefined one, so only add the ones in use.
+  const auth = PACT_BROKER_TOKEN
+    ? { pactBrokerToken: PACT_BROKER_TOKEN }
+    : { pactBrokerUsername: PACT_BROKER_USERNAME, pactBrokerPassword: PACT_BROKER_PASSWORD }
   return {
     pactBrokerUrl: PACT_BROKER_BASE_URL,
-    pactBrokerToken: PACT_BROKER_TOKEN || undefined,
-    pactBrokerUsername: PACT_BROKER_TOKEN ? undefined : PACT_BROKER_USERNAME,
-    pactBrokerPassword: PACT_BROKER_TOKEN ? undefined : PACT_BROKER_PASSWORD,
+    ...auth,
     consumerVersionSelectors: [{ mainBranch: true }, { matchingBranch: true }, { deployedOrReleased: true }],
     enablePending: true,
     publishVerificationResult: process.env.CI === 'true',

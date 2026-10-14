@@ -260,7 +260,7 @@ describe('queries', () => {
 
         expect(() => {
           matchesQuery({key: 'one'}, {one: {$or: null}})
-        }).toThrowError('$or must be an array of queries')
+        }).toThrow('$or must be an array of queries')
 
       })
 
@@ -288,7 +288,7 @@ describe('queries', () => {
 
         expect(() => {
           matchesQuery({key: 'one'}, {one: {$and: null}})
-        }).toThrowError('$and must be an array of queries')
+        }).toThrow('$and must be an array of queries')
 
       })
 

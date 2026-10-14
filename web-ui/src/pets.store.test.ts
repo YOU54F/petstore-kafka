@@ -1,16 +1,16 @@
 import { Pet, PetsAPI } from "./pets.store";
 
-import { PactV3, MatchersV3 } from "@pact-foundation/pact";
+import { Pact, Matchers } from "@pact-foundation/pact";
 
-const provider = new PactV3({
+const pact = new Pact({
   consumer: "web-ui",
   provider: "pets-service",
 });
 
-const { eachLike, like, reify } = MatchersV3;
+const { eachLike, like, reify } = Matchers;
 
-describe("test the pets api collaborator", () => {
-  it("should get available pets from a specified location", () => {
+describe("the pets API client", () => {
+  it("gets available pets from a location", () => {
     const expectedData: Pet = {
       name: "Max",
       location: "Plett",
@@ -18,46 +18,30 @@ describe("test the pets api collaborator", () => {
       status: "available",
     };
     const queryData = { location: "Plett", status: "available" };
-    provider
-      .given("some pets exist",{location:'Plett',status:'available'})
+    return pact
+      .addInteraction()
+      .given("some pets exist", queryData)
       .uponReceiving("A request to get pets")
-      .withRequest({
-        method: "GET",
-        path: "/pets",
-        query: queryData,
-      })
-      .willRespondWith({
-        status: 200,
-        body: eachLike(expectedData),
+      .withRequest("GET", "/pets", (builder) => builder.query(queryData))
+      .willRespondWith(200, (builder) => builder.jsonBody(eachLike(expectedData)))
+      .executeTest(async (mockserver) => {
+        const client = new PetsAPI(mockserver.url);
+        expect(await client.getPets(queryData)).toEqual([expectedData]);
       });
-    return provider.executeTest((mockserver) => {
-      const client = new PetsAPI(mockserver.url);
-      return client.getPets(queryData).then((pet) => {
-        expect(pet).toEqual([expectedData]);
-      });
-    });
   });
-  it("should add a pet", () => {
-      const mockPostData = { location: like("Plett"), name: like("foo") };
-      const postData = reify(mockPostData) as { name: string; location: string }
-    provider
+
+  it("adds a pet", () => {
+    const body = { location: like("Plett"), name: like("foo") };
+    return pact
+      .addInteraction()
       .given("a pet called foo does not exist")
       .uponReceiving("A request to create a pet called foo")
-      .withRequest({
-        method: "POST",
-        path: "/pets",
-        body: mockPostData,
-      })
-      .willRespondWith({
-        status: 201,
+      .withRequest("POST", "/pets", (builder) => builder.jsonBody(body))
+      .willRespondWith(201)
+      .executeTest(async (mockserver) => {
+        const client = new PetsAPI(mockserver.url);
+        const res = await client.addPet(reify(body) as { name: string; location: string });
+        expect(res.status).toEqual(201);
       });
-    return provider.executeTest((mockserver) => {
-      const client = new PetsAPI(mockserver.url);
-      return client
-        .addPet(postData)
-        .then((pet) => {
-          expect(pet.status).toEqual(201);
-        });
-    });
   });
 });

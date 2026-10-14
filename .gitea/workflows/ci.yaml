@@ -1,0 +1,153 @@
+# Petstore Kafka CI (Gitea Actions, GitHub Actions syntax). Gitea reads .gitea/workflows in preference to .github/workflows.
+#
+# Contract tests: adoptions-service and websocket-service consume pets-service's Kafka messages, and web-ui consumes its
+# REST API. The consumer pacts publish to a broker when PACT_BROKER_BASE_URL is set (a repo variable), then pets-service
+# verifies them and can-i-deploy gates each pacticipant. Without a broker, verify uses the pacts from this run.
+#
+# Behind a TLS-intercepting proxy, job containers need the proxy CA mounted at /etc/ssl/certs/ca-certificates.crt (see
+# the runner config in smartbear-all-the-things/infra/gitea).
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  NODE_EXTRA_CA_CERTS: /etc/ssl/certs/ca-certificates.crt
+  SSL_CERT_FILE: /etc/ssl/certs/ca-certificates.crt
+  npm_config_ignore_scripts: "true"   # never run dependency install scripts in CI
+  PACT_DO_NOT_TRACK: "true"
+  PACT_BROKER_BASE_URL: ${{ vars.PACT_BROKER_BASE_URL }}
+  PACT_BROKER_USERNAME: ${{ vars.PACT_BROKER_USERNAME }}
+
+jobs:
+  services:
+    name: Services (unit tests, consumer pacts)
+    runs-on: ubuntu-latest
+    env:
+      PACT_BROKER_TOKEN: ${{ secrets.PACT_BROKER_TOKEN }}
+      PACT_BROKER_PASSWORD: ${{ secrets.PACT_BROKER_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: services/package-lock.json
+      - working-directory: services
+        run: npm ci --ignore-scripts
+      - working-directory: services
+        run: npm test
+      - working-directory: services
+        run: npm run test:pact:consumer
+      - uses: actions/upload-artifact@v3   # v4 isn't supported by Gitea's artifact server
+        with:
+          name: pacts-services
+          path: services/pacts
+      - name: Publish pacts
+        if: ${{ vars.PACT_BROKER_BASE_URL != '' }}
+        run: node scripts/pact-publish.mjs services/pacts
+
+  web-ui:
+    name: web-ui (typecheck, build, consumer pact)
+    runs-on: ubuntu-latest
+    env:
+      PACT_BROKER_TOKEN: ${{ secrets.PACT_BROKER_TOKEN }}
+      PACT_BROKER_PASSWORD: ${{ secrets.PACT_BROKER_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web-ui/package-lock.json
+      - working-directory: web-ui
+        run: npm ci --ignore-scripts
+      - working-directory: web-ui
+        run: npm run build
+      - working-directory: web-ui
+        run: npm test
+      - uses: actions/upload-artifact@v3
+        with:
+          name: pacts-web-ui
+          path: web-ui/pacts
+      - name: Publish pacts
+        if: ${{ vars.PACT_BROKER_BASE_URL != '' }}
+        run: node scripts/pact-publish.mjs web-ui/pacts
+
+  verify:
+    name: Verify pets-service (Kafka messages + REST)
+    runs-on: ubuntu-latest
+    needs: [services, web-ui]
+    env:
+      PACT_BROKER_TOKEN: ${{ secrets.PACT_BROKER_TOKEN }}
+      PACT_BROKER_PASSWORD: ${{ secrets.PACT_BROKER_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: services/package-lock.json
+      # Used only without a broker; with one, the verifier fetches pacts by consumer version selectors.
+      - uses: actions/download-artifact@v3
+        with:
+          name: pacts-services
+          path: services/pacts
+      - uses: actions/download-artifact@v3
+        with:
+          name: pacts-web-ui
+          path: web-ui/pacts
+      - working-directory: services
+        run: npm ci --ignore-scripts
+      # Publishes verification results to the broker when one is set (CI=true).
+      - working-directory: services
+        run: npm run test:pact:provider
+
+  can-i-deploy:
+    name: Pact can-i-deploy (${{ matrix.pacticipant }})
+    runs-on: ubuntu-latest
+    needs: [verify]
+    if: ${{ vars.PACT_BROKER_BASE_URL != '' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        pacticipant: [pets-service, adoptions-service, websocket-service, web-ui]
+    container:
+      image: pactfoundation/pact-cli:1.5.0.5
+    env:
+      PACT_BROKER_TOKEN: ${{ secrets.PACT_BROKER_TOKEN }}
+      PACT_BROKER_PASSWORD: ${{ secrets.PACT_BROKER_PASSWORD }}
+    steps:
+      - name: can-i-deploy
+        run: |
+          pact-broker can-i-deploy --pacticipant "${{ matrix.pacticipant }}" --version "${{ github.sha }}" \
+            --to-environment local --retry-while-unknown 6 --retry-interval 10
+
+  # Main is what's "deployed" to the local environment, so record it once every pacticipant may deploy.
+  record-deployment:
+    name: Record deployment (${{ matrix.pacticipant }})
+    runs-on: ubuntu-latest
+    needs: [can-i-deploy]
+    if: ${{ vars.PACT_BROKER_BASE_URL != '' && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    strategy:
+      matrix:
+        pacticipant: [pets-service, adoptions-service, websocket-service, web-ui]
+    container:
+      image: pactfoundation/pact-cli:1.5.0.5
+    env:
+      PACT_BROKER_TOKEN: ${{ secrets.PACT_BROKER_TOKEN }}
+      PACT_BROKER_PASSWORD: ${{ secrets.PACT_BROKER_PASSWORD }}
+    steps:
+      - run: |
+          pact-broker record-deployment --pacticipant "${{ matrix.pacticipant }}" --version "${{ github.sha }}" \
+            --environment local
+
+  compose:
+    name: Compose files are valid
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: docker compose config -q
+      - run: CA_PEM=placeholder docker compose -f docker-compose.yml -f docker-compose.ca.yml config -q

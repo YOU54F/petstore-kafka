@@ -1,6 +1,7 @@
 const WebSocket = require('ws');
 const { Kafka, logLevel } = require('kafkajs')
 const { KafkaSink, KafkaLogger } = require('../lib')
+const { cacheLocation } = require('./processor')
 
 const PORT = process.env.NODE_PORT || 3300
 const KAFKA_HOSTS = (process.env.KAFKA_HOSTS || 'localhost:9092').split(',').map(s => s.trim())
@@ -10,7 +11,6 @@ const CLIENT_ID = 'websocket'
 // Global state
 let sockets = []
 const socketsForLocation = {}
-let consumer
 
 // ---------------------------------------------------------------
 // Kafka
@@ -33,13 +33,7 @@ const locationCache = new KafkaSink({
   basePath: DATA_BASEPATH,
   name: 'websocket-location-cache',
   topics: ['pets.added', 'adoptions.requested'],
-  onLog: ({log, sink}) => {
-    if(!log.location) {
-      return old
-    }
-    console.log(`Cacheing to location disk: ${log.id} - ${log.location}`)
-    return sink.db.dbPut(log.id, {location: log.location})
-  }
+  onLog: ({log, sink}) => cacheLocation({log, db: sink.db})
 })
 
 let retryAttempts = 0

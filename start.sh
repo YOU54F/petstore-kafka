@@ -1,3 +1,3 @@
 #!/usr/bin/env bash
 
-tmuxinator start kafka-dev
+tmuxinator start petstore-kafka

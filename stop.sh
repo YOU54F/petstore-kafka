@@ -1,3 +1,3 @@
 #!/usr/bin/env bash
 
-tmuxinator stop kafka-dev
+tmuxinator stop petstore-kafka

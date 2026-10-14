@@ -1,22 +1,11 @@
 {
   "name": "lib",
   "version": "1.0.0",
+  "private": true,
   "main": "index.js",
   "license": "MIT",
   "dependencies": {
-    "@types/jest": "^28.1.1",
-    "flat-file-db": "^1.0.0",
-    "kafkajs": "^2.0.2"
-  },
-  "scripts": {
-    "test": "jest",
-    "pact:verify": "jest --testRegex \"^.+verify.js$\" --verbose",
-    "pact:pets": "jest --testRegex \"^.+pact.js$\" --verbose",
-    "test:watch": "jest --watch"
-  },
-  "devDependencies": {
-    "@pact-foundation/pact": "^11.0.2",
-    "jest": "^28.1.1",
-    "uuid": "^9.0.0"
+    "flat-file-db": "1.0.0",
+    "kafkajs": "2.2.4"
   }
 }

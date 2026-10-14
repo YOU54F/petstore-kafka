@@ -1,12 +1,11 @@
+const crypto = require('node:crypto')
 const express = require('express')
-const path = require('path')
 const cors = require('cors')
 const app = express()
-const bodyParser = require('body-parser')
-const uuid = require('uuid')
 const morgan = require('morgan')
 const { Kafka, logLevel } = require('kafkajs')
 const { KafkaSink, KafkaLogger, KafkaStream, FlatDB: { queryObjToMatchQuery } } = require('../lib')
+const { cachePetStatus } = require('./processor')
 
 // Configs
 const KAFKA_HOSTS = (process.env.KAFKA_HOSTS || 'localhost:9092').split(',').map(s => s.trim())
@@ -26,7 +25,6 @@ const kafka = new Kafka({
   }
 })
 
-const consumers = []
 const producer = kafka.producer()
 producer.connect()
 
@@ -37,13 +35,7 @@ const petCache = new KafkaSink({
   basePath: DATA_BASEPATH,
   name: 'adoptions-pet-status-cache',
   topics: ['pets.statusChanged'],
-  onLog: ({log, sink}) => {
-    if(!log.status) {
-      return 
-    }
-    console.log(`Cacheing pet status to disk: ${log.id} - ${log.status}`)
-    sink.db.dbPut(log.id, {status: log.status})
-  }
+  onLog: ({log, sink}) => cachePetStatus({log, db: sink.db})
 })
 
 
@@ -75,7 +67,7 @@ const adoptionsCache = new KafkaSink({
   }
 })
 
-new KafkaStream({
+const adoptionsStream = new KafkaStream({
   kafka,
   topics: ['adoptions.requested', 'adoptions.statusChanged'],
   name: 'adoptions-stream',
@@ -83,7 +75,7 @@ new KafkaStream({
 
     if(topic === 'adoptions.requested') {
       // Produce: adoptions.statusChanged
-      producer.send({
+      await producer.send({
         topic: 'adoptions.statusChanged',
         messages: [
           { value: JSON.stringify({id: log.id,  status: 'requested'}) },
@@ -202,7 +194,7 @@ async function processStatusChange(adoption, status) {
 // Rest
 app.use(morgan('short'))
 app.use(cors())
-app.use(bodyParser.json())
+app.use(express.json())
 
 app.get('/api/adoptions', (req, res) => {
   const { location, status } = req.query
@@ -215,13 +207,13 @@ app.get('/api/adoptions', (req, res) => {
   return res.json(adoptionsCache.db.dbQuery(query))
 })
 
-app.post('/api/adoptions', (req, res) => {
+app.post('/api/adoptions', async (req, res) => {
   const adoption = req.body
-  adoption.id = adoption.id || uuid.v4()
+  adoption.id = adoption.id || crypto.randomUUID()
 
   // TODO: Some validation of the body
 
-  producer.send({
+  await producer.send({
     topic: 'adoptions.requested',
     messages: [
       { value: JSON.stringify(adoption) },
@@ -231,11 +223,11 @@ app.post('/api/adoptions', (req, res) => {
   res.status(201).send(adoption)
 })
 
-app.patch('/api/adoptions/:id', (req, res) => {
+app.patch('/api/adoptions/:id', async (req, res) => {
   const adoption = adoptionsCache.db.dbGet(req.params.id)
   const { status } = req.body
   if(!adoption) {
-    console.log('Cannot find adoption ${req.params.id} to patch')
+    console.log(`Cannot find adoption ${req.params.id} to patch`)
     return res.status(400).json({
       message: 'Adoption not found, cannot patch.'
     })
@@ -244,7 +236,7 @@ app.patch('/api/adoptions/:id', (req, res) => {
   const updatedAdoption = {...adoption, status }
   console.log(`Patching ${JSON.stringify(updatedAdoption)}`)
 
-  producer.send({
+  await producer.send({
     topic: 'adoptions.statusChanged',
     messages: [
       { value: JSON.stringify(updatedAdoption) },
@@ -253,10 +245,6 @@ app.patch('/api/adoptions/:id', (req, res) => {
 
   return res.status(200).send(updatedAdoption)
 })
-
-// // SPA
-// app.use(express.static(path.resolve(__dirname, process.env.SPA_PATH || '../web-ui/build')))
-
 
 // ---------------------------------------------------------------------------------------
 // Boring stuff follows...
@@ -300,8 +288,10 @@ signalTraps.forEach(type => {
 })
 
 
+const consumers = [petCache.consumer, petCache.admin, adoptionsCache.consumer, adoptionsCache.admin, adoptionsStream.consumer]
+
 async function shutdown() {
-  await Promise.all(consumers.map(consumer => consumer.disconnect()))
+  await Promise.all([producer, ...consumers].map(client => client.disconnect()))
 
   server.close(() => {
     console.log('Closed out remaining connections');

@@ -47,7 +47,10 @@ jobs:
           path: services/pacts
       - name: Publish pacts
         if: ${{ vars.PACT_BROKER_BASE_URL != '' }}
-        run: node scripts/pact-publish.mjs services/pacts
+        working-directory: services
+        run: |
+          [ -n "$PACT_BROKER_TOKEN" ] || unset PACT_BROKER_TOKEN   # an empty token gets a 400 from the broker
+          npm run pact:publish
 
   web-ui:
     name: web-ui (typecheck, build, consumer pact)
@@ -74,7 +77,10 @@ jobs:
           path: web-ui/pacts
       - name: Publish pacts
         if: ${{ vars.PACT_BROKER_BASE_URL != '' }}
-        run: node scripts/pact-publish.mjs web-ui/pacts
+        working-directory: web-ui
+        run: |
+          [ -n "$PACT_BROKER_TOKEN" ] || unset PACT_BROKER_TOKEN   # an empty token gets a 400 from the broker
+          npm run pact:publish
 
   verify:
     name: Verify pets-service (Kafka messages + REST)
@@ -105,44 +111,59 @@ jobs:
       - working-directory: services
         run: npm run test:pact:provider
 
+  # Gates each pacticipant on what is deployed to the local environment. On main, deploy does this itself.
   can-i-deploy:
     name: Pact can-i-deploy (${{ matrix.pacticipant }})
     runs-on: ubuntu-latest
     needs: [verify]
-    if: ${{ vars.PACT_BROKER_BASE_URL != '' }}
+    if: ${{ vars.PACT_BROKER_BASE_URL != '' && !(github.event_name == 'push' && github.ref == 'refs/heads/main') }}
     strategy:
       fail-fast: false
       matrix:
         pacticipant: [pets-service, adoptions-service, websocket-service, web-ui]
-    container:
-      image: pactfoundation/pact-cli:1.5.0.5
     env:
       PACT_BROKER_TOKEN: ${{ secrets.PACT_BROKER_TOKEN }}
       PACT_BROKER_PASSWORD: ${{ secrets.PACT_BROKER_PASSWORD }}
     steps:
-      - name: can-i-deploy
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: services/package-lock.json
+      - working-directory: services
+        run: npm ci --ignore-scripts
+      - working-directory: services
         run: |
-          pact-broker can-i-deploy --pacticipant "${{ matrix.pacticipant }}" --version "${{ github.sha }}" \
-            --to-environment local --retry-while-unknown 6 --retry-interval 10
+          [ -n "$PACT_BROKER_TOKEN" ] || unset PACT_BROKER_TOKEN   # an empty token gets a 400 from the broker
+          npm run pact:can-i-deploy -- --pacticipant "${{ matrix.pacticipant }}" --version "${{ github.sha }}"
 
-  # Main is what's "deployed" to the local environment, so record it once every pacticipant may deploy.
-  record-deployment:
-    name: Record deployment (${{ matrix.pacticipant }})
+  # Main is what's "deployed" to the local environment. The provider goes first, so that the consumers' can-i-deploy
+  # finds the pets-service version they were verified against.
+  deploy:
+    name: Record deployments to local
     runs-on: ubuntu-latest
-    needs: [can-i-deploy]
+    needs: [verify]
     if: ${{ vars.PACT_BROKER_BASE_URL != '' && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-    strategy:
-      matrix:
-        pacticipant: [pets-service, adoptions-service, websocket-service, web-ui]
-    container:
-      image: pactfoundation/pact-cli:1.5.0.5
     env:
       PACT_BROKER_TOKEN: ${{ secrets.PACT_BROKER_TOKEN }}
       PACT_BROKER_PASSWORD: ${{ secrets.PACT_BROKER_PASSWORD }}
     steps:
-      - run: |
-          pact-broker record-deployment --pacticipant "${{ matrix.pacticipant }}" --version "${{ github.sha }}" \
-            --environment local
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: services/package-lock.json
+      - working-directory: services
+        run: npm ci --ignore-scripts
+      - working-directory: services
+        run: |
+          [ -n "$PACT_BROKER_TOKEN" ] || unset PACT_BROKER_TOKEN   # an empty token gets a 400 from the broker
+          for pacticipant in pets-service adoptions-service websocket-service web-ui; do
+            npm run pact:can-i-deploy -- --pacticipant "$pacticipant" --version "${{ github.sha }}"
+            npm run pact:record-deployment -- --pacticipant "$pacticipant" --version "${{ github.sha }}"
+          done
 
   compose:
     name: Compose files are valid

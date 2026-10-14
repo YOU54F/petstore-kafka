@@ -82,11 +82,15 @@ API with a stub producer and checks the messages pets-service builds in
 [services/pets/messages.js](./services/pets/messages.js), so it needs no Kafka.
 
 To use a Pact broker, set `PACT_BROKER_BASE_URL` plus `PACT_BROKER_TOKEN` (PactFlow) or
-`PACT_BROKER_USERNAME`/`PACT_BROKER_PASSWORD` (OSS broker). `node scripts/pact-publish.mjs` publishes the pacts with the
-commit SHA as the version and the current branch, and the provider test then fetches pacts from the broker. It
-publishes verification results when `CI=true`. In CI ([.gitea/workflows/ci.yaml](./.gitea/workflows/ci.yaml)), set
-`PACT_BROKER_BASE_URL` (and `PACT_BROKER_USERNAME`) as repository variables and the token or password as secrets; the
-workflow then also runs `can-i-deploy` against the `local` environment and records deployments from `main`.
+`PACT_BROKER_USERNAME`/`PACT_BROKER_PASSWORD` (OSS broker). `npm run pact:publish`, in `services` or `web-ui`, publishes
+that folder's pacts with [`@pact-foundation/pact-cli`](https://www.npmjs.com/package/@pact-foundation/pact-cli), using
+the commit SHA as the version and the current branch. The provider test then fetches pacts from the broker, and
+publishes verification results when `CI=true`. `services` also has `pact:can-i-deploy` and `pact:record-deployment`
+for the `local` environment; pass `--pacticipant` and `--version`.
+
+In CI ([.gitea/workflows/ci.yaml](./.gitea/workflows/ci.yaml)), set `PACT_BROKER_BASE_URL` (and `PACT_BROKER_USERNAME`)
+as repository variables and the token or password as secrets. The workflow then gates pull requests with `can-i-deploy`
+against `local`, and on `main` records each deployment, pets-service first.
 
 ### ReadyAPI
 

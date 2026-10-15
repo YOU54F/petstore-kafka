@@ -67,7 +67,7 @@ dev: ## Start a Tmuxinator project running all dev services
 test: ## Unit tests and consumer pacts for the services and web-ui
 	$(RUN) "cd ./services && npm test && npm run test:pact:consumer && cd ../web-ui && npm test"
 
-verify: test ## Verifies pets-service against every consumer pact (no Kafka needed)
+verify: test ## Verifies pets-service and adoptions-service against every consumer pact (no Kafka needed)
 	$(RUN) "cd ./services && npm run test:pact:provider"
 
 build: ## Build all docker images

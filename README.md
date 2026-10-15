@@ -63,8 +63,8 @@ CA_PEM="$(cat /path/to/ca-bundle.pem)" docker compose -f docker-compose.yml -f d
 
 ## Testing
 
-`make test` runs the unit tests and the consumer pacts; `make verify` then verifies pets-service against them. Neither
-needs Kafka.
+`make test` runs the unit tests and the consumer pacts; `make verify` then verifies pets-service and adoptions-service
+against them. Neither needs Kafka.
 
 ### Contract testing
 
@@ -80,6 +80,14 @@ The consumer tests write pacts to `services/pacts` and `web-ui/pacts`. The provi
 [services/pets/pets-service.provider.pact.test.js](./services/pets/pets-service.provider.pact.test.js), starts the pets
 API with a stub producer and checks the messages pets-service builds in
 [services/pets/messages.js](./services/pets/messages.js), so it needs no Kafka.
+
+adoptions-service is a provider too. As an adoption moves on it sends `pets.statusChanged` itself (`onhold`, `adopted`,
+or back to `available`), built in [services/adoptions/messages.js](./services/adoptions/messages.js). When the adoption
+request names an adopter (`POST /api/adoptions` with an optional `adopterId`, a customer id), those messages carry it as
+`adopterId`, so Petstore Inc's notifications service can tell the adopter. Its consumer pact lives in that repo;
+[services/adoptions/adoptions-service.provider.pact.test.js](./services/adoptions/adoptions-service.provider.pact.test.js)
+verifies it from the broker, or locally from `services/pacts/*-adoptions-service.json` and any paths in `PACT_URLS`
+(comma separated). With no pact to verify, the test is skipped.
 
 To use a Pact broker, set `PACT_BROKER_BASE_URL` plus `PACT_BROKER_TOKEN` (PactFlow) or
 `PACT_BROKER_USERNAME`/`PACT_BROKER_PASSWORD` (OSS broker). `npm run pact:publish`, in `services` or `web-ui`, publishes

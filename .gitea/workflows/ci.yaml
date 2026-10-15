@@ -1,8 +1,10 @@
 # Petstore Kafka CI (Gitea Actions, GitHub Actions syntax). Gitea reads .gitea/workflows in preference to .github/workflows.
 #
 # Contract tests: adoptions-service and websocket-service consume pets-service's Kafka messages, and web-ui consumes its
-# REST API. The consumer pacts publish to a broker when PACT_BROKER_BASE_URL is set (a repo variable), then pets-service
-# verifies them and can-i-deploy gates each pacticipant. Without a broker, verify uses the pacts from this run.
+# REST API. adoptions-service is also a provider: petstore-inc's notifications consumes the pets.statusChanged messages
+# it sends, with the adopter's id. The consumer pacts publish to a broker when PACT_BROKER_BASE_URL is set (a repo
+# variable), then both providers verify them and can-i-deploy gates each pacticipant. Without a broker, verify uses the
+# pacts from this run (notifications' pact is only on the broker, so adoptions-service's verification is skipped).
 #
 # Behind a TLS-intercepting proxy, job containers need the proxy CA mounted at /etc/ssl/certs/ca-certificates.crt (see
 # the runner config in smartbear-all-the-things/infra/gitea).
@@ -83,7 +85,7 @@ jobs:
           npm run pact:publish
 
   verify:
-    name: Verify pets-service (Kafka messages + REST)
+    name: Verify pets-service and adoptions-service (Kafka messages + REST)
     runs-on: ubuntu-latest
     needs: [services, web-ui]
     env:

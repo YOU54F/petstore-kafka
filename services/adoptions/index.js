@@ -6,6 +6,7 @@ const morgan = require('morgan')
 const { Kafka, logLevel } = require('kafkajs')
 const { KafkaSink, KafkaLogger, KafkaStream, FlatDB: { queryObjToMatchQuery } } = require('../lib')
 const { cachePetStatus } = require('./processor')
+const { petAdoptionStatusChanged, toRecord } = require('./messages')
 
 // Configs
 const KAFKA_HOSTS = (process.env.KAFKA_HOSTS || 'localhost:9092').split(',').map(s => s.trim())
@@ -132,14 +133,7 @@ async function processStatusChange(adoption, status) {
     }
 
     // Available
-    const petMessages = adoption.pets.map(petId => ({
-        value: JSON.stringify({id: petId, status: 'onhold'}),
-    }))
-
-    await producer.send({
-      topic: 'pets.statusChanged',
-      messages: petMessages
-    })
+    await producer.send(toRecord(adoption.pets.map(petId => petAdoptionStatusChanged(petId, 'onhold', adoption.adopterId))))
 
     await producer.send({
       topic: 'adoptions.statusChanged',
@@ -154,35 +148,13 @@ async function processStatusChange(adoption, status) {
 
   // Adopted -> Claim all the Pets
   if(status === 'approved') {
-    const claimPetMessages = adoption.pets
-          .map(petId => ({
-            value: JSON.stringify({
-              id: petId,
-              status: 'adopted'
-            })
-          }))
-
-    await producer.send({
-      topic: 'pets.statusChanged',
-      messages: claimPetMessages
-    })
+    await producer.send(toRecord(adoption.pets.map(petId => petAdoptionStatusChanged(petId, 'adopted', adoption.adopterId))))
 
     return 
   }
 
   if(status === 'denied') {
-    const claimPetMessages = adoption.pets
-          .map(petId => ({
-            value: JSON.stringify({
-              id: petId,
-              status: 'available'
-            })
-          }))
-
-    await producer.send({
-      topic: 'pets.statusChanged',
-      messages: claimPetMessages
-    })
+    await producer.send(toRecord(adoption.pets.map(petId => petAdoptionStatusChanged(petId, 'available', adoption.adopterId))))
 
     return 
   }
@@ -212,6 +184,10 @@ app.post('/api/adoptions', async (req, res) => {
   adoption.id = adoption.id || crypto.randomUUID()
 
   // TODO: Some validation of the body
+  // adopterId (optional) is the adopter's customer id; it is passed on with the pets' status changes.
+  if(adoption.adopterId !== undefined && (typeof adoption.adopterId !== 'string' || !adoption.adopterId)) {
+    return res.status(400).json({ message: 'adopterId must be a non-empty string.' })
+  }
 
   await producer.send({
     topic: 'adoptions.requested',

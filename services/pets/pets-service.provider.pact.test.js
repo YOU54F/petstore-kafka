@@ -45,6 +45,9 @@ function pactSource() {
     ...auth,
     consumerVersionSelectors: [{ mainBranch: true }, { matchingBranch: true }, { deployedOrReleased: true }],
     enablePending: true,
+    // WIP pacts: also verify consumers' feature-branch pacts that no successful verification covers yet (e.g. a new
+    // consumer such as petstore-inc's notifications, before its branch merges). They can't fail the build (pending).
+    includeWipPactsSince: process.env.PACT_INCLUDE_WIP_SINCE || '2026-01-01',
     publishVerificationResult: process.env.CI === 'true',
     providerVersion: version,
     providerVersionBranch: branch,

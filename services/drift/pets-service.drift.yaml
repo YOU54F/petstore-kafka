@@ -1,0 +1,67 @@
+# yaml-language-server: $schema=https://download.pactflow.io/drift/schemas/drift.testcases.v1.schema.json
+drift-testcase-file: v1
+title: pets-service AsyncAPI conformance
+
+# Every operation in specs/asyncapi/pets-service.asyncapi.yaml, against the real pets-service and adoptions-service on a real
+# broker (harness.js, started by run-asyncapi.sh). asyncapi.lua sets up each case's provider state; for the send
+# operations, Drift subscribes to the topic, runs trigger.sh, and checks the first message the service publishes
+# there. For the receive operations, Drift publishes the message itself. Cases run in name order.
+
+sources:
+  - name: pets
+    path: ${env:DRIFT_SPEC_PATH}
+  - name: states
+    path: ./asyncapi.lua
+
+plugins:
+  - name: asyncapi
+  - name: kafka
+  - name: json
+
+operations:
+  onPetAdded:
+    target: pets:onPetAdded:petAdded
+    description: pets-service caches a new pet and makes it available on pets.statusChanged.
+    parameters:
+      broker: ${env:KAFKA_BOOTSTRAP}
+      probe-topic: pets.statusChanged
+      payload:
+        id: 5b0c4e0e-6d1a-4f5e-9a51-1f3c2d7e8a11
+        name: Drift
+        location: Plett
+
+  onPetStatusChanged:
+    target: pets:onPetStatusChanged:petStatusChanged
+    description: pets-service updates a pet's status in its cache.
+    parameters:
+      broker: ${env:KAFKA_BOOTSTRAP}
+      payload:
+        id: 5b0c4e0e-6d1a-4f5e-9a51-1f3c2d7e8a11
+        status: onhold
+
+  publishPetAdded_NewPet:
+    target: pets:publishPetAdded:petAdded
+    description: POST /api/pets adds a pet.
+    parameters:
+      broker: ${env:KAFKA_BOOTSTRAP}
+    trigger:
+      executable-type: command
+      value: ${env:DRIFT_TRIGGER_HOOK}
+
+  publishPetStatusChanged_NewPet:
+    target: pets:publishPetStatusChanged:petStatusChanged
+    description: A new pet becomes available.
+    parameters:
+      broker: ${env:KAFKA_BOOTSTRAP}
+    trigger:
+      executable-type: command
+      value: ${env:DRIFT_TRIGGER_HOOK}
+
+  publishPetStatusChanged_Patched:
+    target: pets:publishPetStatusChanged:petStatusChanged
+    description: PATCH /api/pets/{id} marks an available pet adopted.
+    parameters:
+      broker: ${env:KAFKA_BOOTSTRAP}
+    trigger:
+      executable-type: command
+      value: ${env:DRIFT_TRIGGER_HOOK}

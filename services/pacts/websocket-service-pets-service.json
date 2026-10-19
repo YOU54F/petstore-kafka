@@ -4,6 +4,13 @@
   },
   "interactions": [
     {
+      "comments": {
+        "references": {
+          "AsyncAPI": {
+            "operationId": "publishPetAdded"
+          }
+        }
+      },
       "contents": {
         "content": {
           "id": "6c9f429c-3f5d-4a55-88bf-026b2b404710",

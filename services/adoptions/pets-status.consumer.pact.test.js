@@ -14,6 +14,7 @@ describe('adoptions-service consuming pets.statusChanged', () => {
     return pact
       .addAsynchronousInteraction()
       .given('a pet exists')
+      .reference('AsyncAPI', 'operationId', 'publishPetStatusChanged') // specs/asyncapi/pets-service.asyncapi.yaml
       .expectsToReceive('a pet status change', (builder) => {
         builder
           .withJSONContent({

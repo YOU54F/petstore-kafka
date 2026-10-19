@@ -13,6 +13,7 @@ describe('websocket-service consuming pets.added', () => {
   it('remembers where a new pet is', () => {
     return pact
       .addAsynchronousInteraction()
+      .reference('AsyncAPI', 'operationId', 'publishPetAdded') // specs/asyncapi/pets-service.asyncapi.yaml
       .expectsToReceive('a pet was added', (builder) => {
         builder
           .withJSONContent({

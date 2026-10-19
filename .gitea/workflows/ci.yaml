@@ -279,7 +279,8 @@ jobs:
         run: |
           [ -n "$PACT_BROKER_TOKEN" ] || unset PACT_BROKER_TOKEN   # an empty token gets a 400 from the broker
           # A fresh PactFlow workspace has no environments, and can-i-deploy --to-environment needs `local`.
-          npx pact-broker list-environments | grep -qw local || npx pact-broker create-environment --name local
+          # No grep -q: exiting early breaks the CLI's pipe, and pipefail then reads that as no `local`.
+          npx pact-broker list-environments | grep -w local >/dev/null || npx pact-broker create-environment --name local
           npm run pact:can-i-deploy -- --pacticipant "${{ matrix.pacticipant }}" --version "${{ github.sha }}"
 
   # Main is what's "deployed" to the local environment, per lane. The providers go first, so that the consumers'
@@ -310,7 +311,7 @@ jobs:
       - working-directory: services
         run: |
           [ -n "$PACT_BROKER_TOKEN" ] || unset PACT_BROKER_TOKEN   # an empty token gets a 400 from the broker
-          npx pact-broker list-environments | grep -qw local || npx pact-broker create-environment --name local
+          npx pact-broker list-environments | grep -w local >/dev/null || npx pact-broker create-environment --name local
           for pacticipant in pets-service pets-service-events adoptions-service-events adoptions-service websocket-service web-ui; do
             npm run pact:can-i-deploy -- --pacticipant "$pacticipant" --version "${{ github.sha }}"
             npm run pact:record-deployment -- --pacticipant "$pacticipant" --version "${{ github.sha }}"

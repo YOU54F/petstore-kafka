@@ -169,9 +169,11 @@ jobs:
         if: ${{ env.PACT_BROKER_BASE_URL != '' }}
         run: |
           [ -n "$PACT_BROKER_TOKEN" ] || unset PACT_BROKER_TOKEN
+          # The CLI puts --branch into the URL path as is, so a feat/... branch 404s unless its slash is encoded.
+          branch="${{ github.head_ref || github.ref_name }}"
           for pacticipant in pets-service-events adoptions-service-events; do
             npx pact-broker create-or-update-version --pacticipant "$pacticipant" --version "${{ github.sha }}" \
-              --branch "${{ github.head_ref || github.ref_name }}"
+              --branch "${branch//\//%2F}"
           done
 
   # The message pacts against specs/asyncapi (both lanes), then Drift against the real services (with PactFlow).

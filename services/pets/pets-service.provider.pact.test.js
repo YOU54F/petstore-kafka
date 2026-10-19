@@ -25,6 +25,11 @@ beforeAll(async () => {
 })
 afterAll(() => new Promise((resolve) => server.close(resolve)))
 
+const messageProviders = {
+  'a pet was added': asMessage(petAdded(examplePet())),
+  'a pet status change': asMessage(petStatusChanged(examplePet(), 'available')),
+}
+
 // Without a broker, the provider's pacts in PACT_DIR plus any extra local files.
 function pactSource(provider, extra = []) {
   const { PACT_BROKER_BASE_URL, PACT_BROKER_TOKEN, PACT_BROKER_USERNAME, PACT_BROKER_PASSWORD } = process.env
@@ -73,6 +78,9 @@ describe('pets-service', () => {
         'a pet called foo does not exist': async () => {},
         'a pet exists': async () => {},
       },
+      // Consumer versions already deployed to local still name pets-service as their message provider, so answer
+      // those too. Drop this once every consumer has redeployed with a pact against pets-service-events.
+      messageProviders,
     })
   }, 60_000)
 })
@@ -81,11 +89,7 @@ describe('pets-service-events', () => {
   it('meets the expectations of its event consumers', () => {
     return verify('pets-service-events', {
       ...pactSource('pets-service-events'),
-
-      messageProviders: {
-        'a pet was added': asMessage(petAdded(examplePet())),
-        'a pet status change': asMessage(petStatusChanged(examplePet(), 'available')),
-      },
+      messageProviders,
     })
   }, 60_000)
 })

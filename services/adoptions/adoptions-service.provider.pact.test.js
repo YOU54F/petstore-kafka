@@ -32,9 +32,9 @@ function localPacts() {
   return [...fromDir, ...fromEnv].filter((f) => /^https?:/.test(f) || fs.existsSync(f))
 }
 
-function pactSource() {
+function pactSource({ local = true } = {}) {
   const { PACT_BROKER_BASE_URL, PACT_BROKER_TOKEN, PACT_BROKER_USERNAME, PACT_BROKER_PASSWORD } = process.env
-  if(!PACT_BROKER_BASE_URL) return { pactUrls: localPacts() }
+  if(!PACT_BROKER_BASE_URL) return { pactUrls: local ? localPacts() : [] }
 
   const { version, branch } = gitInfo()
   // pact-core validates every auth key that is present, even an undefined one, so only add the ones in use.
@@ -56,13 +56,16 @@ function pactSource() {
   }
 }
 
-const source = pactSource()
-const nothingToVerify = source.pactUrls && source.pactUrls.length === 0
-
-describe('adoptions-service-events', () => {
+// adoptions-service: consumer versions already deployed to local (notifications) still name it as the message
+// provider. Broker only; drop it once every consumer has redeployed with a pact against adoptions-service-events.
+describe.each([
+  ['adoptions-service-events', pactSource()],
+  ['adoptions-service', pactSource({ local: false })],
+])('%s', (provider, source) => {
+  const nothingToVerify = source.pactUrls && source.pactUrls.length === 0
   ;(nothingToVerify ? it.skip : it)('meets the expectations of its consumers', () => {
     return new Verifier({
-      provider: 'adoptions-service-events',
+      provider,
       providerBaseUrl: `http://127.0.0.1:${server.address().port}`,
       logLevel: process.env.LOG_LEVEL || 'warn',
       ...source,

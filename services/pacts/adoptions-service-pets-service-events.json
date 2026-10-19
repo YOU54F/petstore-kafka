@@ -1,25 +1,25 @@
 {
   "consumer": {
-    "name": "websocket-service"
+    "name": "adoptions-service"
   },
   "interactions": [
     {
       "comments": {
         "references": {
           "AsyncAPI": {
-            "operationId": "publishPetAdded"
+            "operationId": "publishPetStatusChanged"
           }
         }
       },
       "contents": {
         "content": {
           "id": "6c9f429c-3f5d-4a55-88bf-026b2b404710",
-          "location": "Plett"
+          "status": "available"
         },
         "contentType": "application/json",
         "encoded": false
       },
-      "description": "a pet was added",
+      "description": "a pet status change",
       "matchingRules": {
         "body": {
           "$.id": {
@@ -31,20 +31,26 @@
               }
             ]
           },
-          "$.location": {
+          "$.status": {
             "combine": "AND",
             "matchers": [
               {
-                "match": "type"
+                "match": "regex",
+                "regex": "^(pending|available|onhold|adopted)$"
               }
             ]
           }
         }
       },
       "metadata": {
-        "topic": "pets.added"
+        "topic": "pets.statusChanged"
       },
       "pending": false,
+      "providerStates": [
+        {
+          "name": "a pet exists"
+        }
+      ],
       "type": "Asynchronous/Messages"
     }
   ],
@@ -61,6 +67,6 @@
     }
   },
   "provider": {
-    "name": "pets-service"
+    "name": "pets-service-events"
   }
 }

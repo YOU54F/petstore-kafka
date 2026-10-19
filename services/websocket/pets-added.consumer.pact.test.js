@@ -4,7 +4,7 @@ const { cacheLocation } = require('./processor')
 
 const pact = new Pact({
   consumer: 'websocket-service',
-  provider: 'pets-service',
+  provider: 'pets-service-events',
   dir: PACT_DIR,
   logLevel: process.env.LOG_LEVEL || 'warn',
 })

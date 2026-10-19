@@ -41,13 +41,15 @@ reference those operationIds (`.reference('AsyncAPI', 'operationId', ...)`), so 
 
 ```sh
 npm_config_ignore_scripts=true npx --yes @pactflow/openapi-pact-comparator@2.4.0 \
-  --asyncapi specs/asyncapi/pets-service.asyncapi.yaml services/pacts/*-pets-service.json
+  --asyncapi specs/asyncapi/pets-service.asyncapi.yaml services/pacts/*-pets-service-events.json
 ```
 
 [services/drift/run-asyncapi.sh](./services/drift/run-asyncapi.sh) checks the real services against the documents with
 PactFlow Drift: it needs a Kafka broker in `KAFKA_BOOTSTRAP` and a PactFlow tenant
 (`PACTFLOW_URL`, `PACTFLOW_TOKEN`), and with `DRIFT_PUBLISH_PROVIDER_CONTRACT=true` publishes each document as the
-provider contract of `pets-service-events` / `adoptions-service-events`.
+provider contract of `pets-service-events` / `adoptions-service-events`. Those are the pacticipants the message pacts
+name as their provider, so PactFlow compares each consumer's pact with the document; pets-service itself is the
+provider of web-ui's REST pact.
 
 
 ## Developing
@@ -86,23 +88,24 @@ against them. Neither needs Kafka.
 
 | Consumer | Contract | Test |
 |---|---|---|
-| adoptions-service | `pets.statusChanged` messages | [services/adoptions/pets-status.consumer.pact.test.js](./services/adoptions/pets-status.consumer.pact.test.js) |
-| websocket-service | `pets.added` messages | [services/websocket/pets-added.consumer.pact.test.js](./services/websocket/pets-added.consumer.pact.test.js) |
-| web-ui | `GET /api/pets`, `POST /api/pets` | [web-ui/src/pets.store.test.ts](./web-ui/src/pets.store.test.ts) |
+| adoptions-service | `pets.statusChanged` messages, from pets-service-events | [services/adoptions/pets-status.consumer.pact.test.js](./services/adoptions/pets-status.consumer.pact.test.js) |
+| websocket-service | `pets.added` messages, from pets-service-events | [services/websocket/pets-added.consumer.pact.test.js](./services/websocket/pets-added.consumer.pact.test.js) |
+| web-ui | `GET /api/pets`, `POST /api/pets`, from pets-service | [web-ui/src/pets.store.test.ts](./web-ui/src/pets.store.test.ts) |
 
 The consumer tests write pacts to `services/pacts` and `web-ui/pacts`, which are committed (CI fails if a run changes
 them) so other repos can verify against a pinned commit. The provider test,
 [services/pets/pets-service.provider.pact.test.js](./services/pets/pets-service.provider.pact.test.js), starts the pets
-API with a stub producer and checks the messages pets-service builds in
-[services/pets/messages.js](./services/pets/messages.js), so it needs no Kafka.
+API with a stub producer to verify web-ui's pact as pets-service, then as pets-service-events checks the messages it
+builds in [services/pets/messages.js](./services/pets/messages.js), so it needs no Kafka.
 
 adoptions-service is a provider too. As an adoption moves on it sends `pets.statusChanged` itself (`onhold`, `adopted`,
 or back to `available`), built in [services/adoptions/messages.js](./services/adoptions/messages.js). When the adoption
 request names an adopter (`POST /api/adoptions` with an optional `adopterId`, a customer id), those messages carry it as
-`adopterId`, so Petstore Inc's notifications service can tell the adopter. Its consumer pact lives in that repo;
+`adopterId`, so Petstore Inc's notifications service can tell the adopter. Its consumer pact, with
+adoptions-service-events, lives in that repo;
 [services/adoptions/adoptions-service.provider.pact.test.js](./services/adoptions/adoptions-service.provider.pact.test.js)
-verifies it from the broker, or locally from `services/pacts/*-adoptions-service.json` and any paths in `PACT_URLS`
-(comma separated). With no pact to verify, the test is skipped.
+verifies it from the broker, or locally from `services/pacts/*-adoptions-service-events.json` and any paths in
+`PACT_URLS` (comma separated). With no pact to verify, the test is skipped.
 
 To use a Pact broker, set `PACT_BROKER_BASE_URL` plus `PACT_BROKER_TOKEN` (PactFlow) or
 `PACT_BROKER_USERNAME`/`PACT_BROKER_PASSWORD` (OSS broker). `npm run pact:publish`, in `services` or `web-ui`, publishes
@@ -113,7 +116,7 @@ for the `local` environment; pass `--pacticipant` and `--version`.
 
 In CI ([.gitea/workflows/ci.yaml](./.gitea/workflows/ci.yaml)), set `PACT_BROKER_BASE_URL` (and `PACT_BROKER_USERNAME`)
 as repository variables and the token or password as secrets. The workflow then gates pull requests with `can-i-deploy`
-against `local`, and on `main` records each deployment, pets-service first.
+against `local`, and on `main` records each deployment, the providers first.
 
 With the repository variables `PACTFLOW_ENABLED=true` and `PACTFLOW_BASE_URL`, and the secret `PACTFLOW_TOKEN`, every
 broker job also runs in a PactFlow lane (job names end in "· PactFlow"), with its own `can-i-deploy` and deployments.

@@ -2,10 +2,12 @@
 #
 # Contract tests: adoptions-service and websocket-service consume pets-service's Kafka messages, and web-ui consumes its
 # REST API. adoptions-service is also a provider: petstore-inc's notifications consumes the pets.statusChanged messages
-# it sends, with the adopter's id. The consumer pacts publish to a broker when PACT_BROKER_BASE_URL is set (a repo
-# variable), then both providers verify them and can-i-deploy gates each pacticipant. Without a broker, verify uses the
-# pacts from this run (notifications' pact is only on the broker, so adoptions-service's verification is skipped). The
-# pacts are also committed, and the consumer jobs fail if a run changes them.
+# it sends, with the adopter's id. Each provider's messages are a pacticipant of their own, pets-service-events and
+# adoptions-service-events, whose provider contracts are the AsyncAPI documents; pets-service keeps web-ui's REST pact.
+# The consumer pacts publish to a broker when PACT_BROKER_BASE_URL is set (a repo variable), then the providers verify
+# them and can-i-deploy gates each pacticipant. Without a broker, verify uses the pacts from this run (notifications'
+# pact is only on the broker, so adoptions-service-events' verification is skipped). The pacts are also committed, and
+# the consumer jobs fail if a run changes them.
 #
 # Broker lanes, as in petstore-inc: every job that talks to a Pact Broker runs once per lane in matrix.broker:
 #   oss       the Pact Broker in vars.PACT_BROKER_BASE_URL (basic auth), always
@@ -22,6 +24,9 @@
 # The PactFlow lane publishes each document, with Drift's results, as the provider contract of pets-service-events and
 # adoptions-service-events.
 #
+# Concurrency: a newer run of a ref cancels the older one. Service containers share one network namespace on Gitea, so
+# the jobs that bind fixed ports (asyncapi's Kafka and Drift) also queue per lane across all runs of this repo.
+#
 # Behind a TLS-intercepting proxy, job containers need the proxy CA mounted at /etc/ssl/certs/ca-certificates.crt (see
 # the runner config in smartbear-all-the-things/infra/gitea).
 name: ci
@@ -30,6 +35,10 @@ on:
   push:
     branches: [main]
   pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
 
 env:
   NODE_EXTRA_CA_CERTS: /etc/ssl/certs/ca-certificates.crt
@@ -119,7 +128,7 @@ jobs:
           npm run pact:publish
 
   verify:
-    name: Verify pets-service and adoptions-service (Kafka messages + REST)${{ matrix.broker == 'pactflow' && ' · PactFlow' || '' }}
+    name: Verify pets-service(-events) and adoptions-service-events (REST + Kafka messages)${{ matrix.broker == 'pactflow' && ' · PactFlow' || '' }}
     runs-on: ubuntu-latest
     needs: [services, web-ui]
     if: ${{ matrix.broker == 'oss' || vars.PACTFLOW_ENABLED == 'true' }}
@@ -154,6 +163,16 @@ jobs:
         run: |
           [ -n "$PACT_BROKER_TOKEN" ] || unset PACT_BROKER_TOKEN   # an empty token gets a 400 from the broker
           npm run test:pact:provider
+      # The -events pacticipants get a version even when no consumer had a pact for them to verify (notifications'
+      # pact may not be on this lane's broker), so can-i-deploy and record-deployment find one.
+      - working-directory: services
+        if: ${{ env.PACT_BROKER_BASE_URL != '' }}
+        run: |
+          [ -n "$PACT_BROKER_TOKEN" ] || unset PACT_BROKER_TOKEN
+          for pacticipant in pets-service-events adoptions-service-events; do
+            npx pact-broker create-or-update-version --pacticipant "$pacticipant" --version "${{ github.sha }}" \
+              --branch "${{ github.head_ref || github.ref_name }}"
+          done
 
   # The message pacts against specs/asyncapi (both lanes), then Drift against the real services (with PactFlow).
   asyncapi:
@@ -164,6 +183,10 @@ jobs:
       fail-fast: false
       matrix:
         broker: [oss, pactflow]
+    # This lane's ports, one run at a time (see Concurrency above).
+    concurrency:
+      group: ${{ github.repository }}-asyncapi-${{ matrix.broker }}
+      cancel-in-progress: false
     env:
       PACT_BROKER_BASE_URL: ${{ matrix.broker == 'pactflow' && vars.PACTFLOW_BASE_URL || vars.PACT_BROKER_BASE_URL }}
       PACT_BROKER_TOKEN: ${{ matrix.broker == 'pactflow' && secrets.PACTFLOW_TOKEN || secrets.PACT_BROKER_TOKEN }}
@@ -195,12 +218,12 @@ jobs:
           cache: npm
           cache-dependency-path: services/package-lock.json
       # Each message pact's comments.references.AsyncAPI.operationId must name a send operation whose message matches.
-      # pets-service is the only provider with committed message pacts (notifications' pact is in petstore-inc).
+      # pets-service-events is the only provider with committed message pacts (notifications' pact is in petstore-inc).
       - name: Message pacts match the AsyncAPI documents
         if: ${{ matrix.broker == 'oss' }}   # the same files in both lanes
         run: |
           npx --yes @pactflow/openapi-pact-comparator@2.4.0 --asyncapi specs/asyncapi/pets-service.asyncapi.yaml \
-            services/pacts/adoptions-service-pets-service.json services/pacts/websocket-service-pets-service.json
+            services/pacts/adoptions-service-pets-service-events.json services/pacts/websocket-service-pets-service-events.json
       - working-directory: services
         if: ${{ vars.PACTFLOW_ENABLED == 'true' }}
         run: npm ci --ignore-scripts
@@ -235,7 +258,7 @@ jobs:
       fail-fast: false
       matrix:
         broker: [oss, pactflow]
-        pacticipant: [pets-service, adoptions-service, websocket-service, web-ui]
+        pacticipant: [pets-service, pets-service-events, adoptions-service, adoptions-service-events, websocket-service, web-ui]
     env:
       PACT_BROKER_BASE_URL: ${{ matrix.broker == 'pactflow' && vars.PACTFLOW_BASE_URL || vars.PACT_BROKER_BASE_URL }}
       PACT_BROKER_TOKEN: ${{ matrix.broker == 'pactflow' && secrets.PACTFLOW_TOKEN || secrets.PACT_BROKER_TOKEN }}
@@ -257,8 +280,8 @@ jobs:
           npx pact-broker list-environments | grep -qw local || npx pact-broker create-environment --name local
           npm run pact:can-i-deploy -- --pacticipant "${{ matrix.pacticipant }}" --version "${{ github.sha }}"
 
-  # Main is what's "deployed" to the local environment, per lane. The provider goes first, so that the consumers'
-  # can-i-deploy finds the pets-service version they were verified against.
+  # Main is what's "deployed" to the local environment, per lane. The providers go first, so that the consumers'
+  # can-i-deploy finds the pets-service(-events) version they were verified against.
   deploy:
     name: Record deployments to local${{ matrix.broker == 'pactflow' && ' · PactFlow' || '' }}
     runs-on: ubuntu-latest
@@ -286,7 +309,7 @@ jobs:
         run: |
           [ -n "$PACT_BROKER_TOKEN" ] || unset PACT_BROKER_TOKEN   # an empty token gets a 400 from the broker
           npx pact-broker list-environments | grep -qw local || npx pact-broker create-environment --name local
-          for pacticipant in pets-service adoptions-service websocket-service web-ui; do
+          for pacticipant in pets-service pets-service-events adoptions-service-events adoptions-service websocket-service web-ui; do
             npm run pact:can-i-deploy -- --pacticipant "$pacticipant" --version "${{ github.sha }}"
             npm run pact:record-deployment -- --pacticipant "$pacticipant" --version "${{ github.sha }}"
           done

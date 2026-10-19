@@ -6,9 +6,10 @@ const { Verifier, providerWithMetadata } = require('@pact-foundation/pact')
 const { PACT_DIR, gitInfo } = require('../test/support')
 const { petAdoptionStatusChanged } = require('./messages')
 
-// adoptions-service as a provider: the pets.statusChanged events it sends as adoptions move on, against what its
-// consumers expect (petstore-inc's notifications service, which tells the adopter). Messages only, answered by the
-// same builder index.js sends with; no Kafka.
+// adoptions-service as a provider, under the pacticipant adoptions-service-events (whose provider contract is the
+// AsyncAPI document, specs/asyncapi/adoptions-service.asyncapi.yaml): the pets.statusChanged events it sends as
+// adoptions move on, against what its consumers expect (petstore-inc's notifications service, which tells the
+// adopter). Messages only, answered by the same builder index.js sends with; no Kafka.
 
 // Each message's topic travels as Kafka metadata, so it is part of the contract too.
 const asMessage = ({ topic, value }) => providerWithMetadata(() => value, { topic })
@@ -21,11 +22,11 @@ beforeAll(async () => {
 })
 afterAll(() => new Promise((resolve) => server.close(resolve)))
 
-// Without a broker: *-adoptions-service.json in PACT_DIR, plus any files in PACT_URLS (comma separated), e.g.
-// petstore-inc/services/notifications/pacts/notifications-adoptions-service.json.
+// Without a broker: *-adoptions-service-events.json in PACT_DIR, plus any files in PACT_URLS (comma separated), e.g.
+// petstore-inc/services/notifications/pacts/notifications-adoptions-service-events.json.
 function localPacts() {
   const fromDir = fs.existsSync(PACT_DIR)
-    ? fs.readdirSync(PACT_DIR).filter((f) => f.endsWith('-adoptions-service.json')).map((f) => path.join(PACT_DIR, f))
+    ? fs.readdirSync(PACT_DIR).filter((f) => f.endsWith('-adoptions-service-events.json')).map((f) => path.join(PACT_DIR, f))
     : []
   const fromEnv = (process.env.PACT_URLS || '').split(',').map((s) => s.trim()).filter(Boolean)
   return [...fromDir, ...fromEnv].filter((f) => /^https?:/.test(f) || fs.existsSync(f))
@@ -58,10 +59,10 @@ function pactSource() {
 const source = pactSource()
 const nothingToVerify = source.pactUrls && source.pactUrls.length === 0
 
-describe('adoptions-service', () => {
+describe('adoptions-service-events', () => {
   ;(nothingToVerify ? it.skip : it)('meets the expectations of its consumers', () => {
     return new Verifier({
-      provider: 'adoptions-service',
+      provider: 'adoptions-service-events',
       providerBaseUrl: `http://127.0.0.1:${server.address().port}`,
       logLevel: process.env.LOG_LEVEL || 'warn',
       ...source,

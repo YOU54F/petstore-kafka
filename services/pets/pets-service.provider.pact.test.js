@@ -6,9 +6,10 @@ const { PACT_DIR, tempDb, gitInfo } = require('../test/support')
 const { createApp } = require('./service')
 const { petAdded, petStatusChanged } = require('./messages')
 
-// pets-service against everything its consumers expect of it: web-ui's REST pact, and the events that
-// adoptions-service and websocket-service consume. No Kafka: the app gets a stub producer, and message
-// interactions are answered by the same builders the service sends with.
+// pets-service against everything its consumers expect of it: web-ui's REST pact as pets-service, and the events that
+// adoptions-service and websocket-service consume as pets-service-events (the pacticipant whose provider contract is
+// the AsyncAPI document, specs/asyncapi/pets-service.asyncapi.yaml). No Kafka: the app gets a stub producer, and
+// message interactions are answered by the same builders the service sends with.
 
 const db = tempDb('pets-cache')
 const producer = { send: async () => {} }
@@ -24,13 +25,14 @@ beforeAll(async () => {
 })
 afterAll(() => new Promise((resolve) => server.close(resolve)))
 
-function pactSource() {
+// Without a broker, the provider's pacts in PACT_DIR plus any extra local files.
+function pactSource(provider, extra = []) {
   const { PACT_BROKER_BASE_URL, PACT_BROKER_TOKEN, PACT_BROKER_USERNAME, PACT_BROKER_PASSWORD } = process.env
 
   if(!PACT_BROKER_BASE_URL) {
     const local = [
-      ...fs.readdirSync(PACT_DIR).filter((f) => f.endsWith('-pets-service.json')).map((f) => path.join(PACT_DIR, f)),
-      path.resolve(__dirname, '../../web-ui/pacts/web-ui-pets-service.json'),
+      ...fs.readdirSync(PACT_DIR).filter((f) => f.endsWith(`-${provider}.json`)).map((f) => path.join(PACT_DIR, f)),
+      ...extra,
     ]
     return { pactUrls: local.filter((f) => fs.existsSync(f)) }
   }
@@ -54,13 +56,14 @@ function pactSource() {
   }
 }
 
+const verify = (provider, options) =>
+  new Verifier({ provider, logLevel: process.env.LOG_LEVEL || 'warn', ...options }).verifyProvider()
+
 describe('pets-service', () => {
-  it('meets the expectations of its consumers', () => {
-    return new Verifier({
-      provider: 'pets-service',
+  it('meets the expectations of its REST consumers', () => {
+    return verify('pets-service', {
       providerBaseUrl: `http://127.0.0.1:${server.address().port}/api`,
-      logLevel: process.env.LOG_LEVEL || 'warn',
-      ...pactSource(),
+      ...pactSource('pets-service', [path.resolve(__dirname, '../../web-ui/pacts/web-ui-pets-service.json')]),
 
       stateHandlers: {
         'some pets exist': async ({ location, status }) => {
@@ -70,11 +73,19 @@ describe('pets-service', () => {
         'a pet called foo does not exist': async () => {},
         'a pet exists': async () => {},
       },
+    })
+  }, 60_000)
+})
+
+describe('pets-service-events', () => {
+  it('meets the expectations of its event consumers', () => {
+    return verify('pets-service-events', {
+      ...pactSource('pets-service-events'),
 
       messageProviders: {
         'a pet was added': asMessage(petAdded(examplePet())),
         'a pet status change': asMessage(petStatusChanged(examplePet(), 'available')),
       },
-    }).verifyProvider()
+    })
   }, 60_000)
 })

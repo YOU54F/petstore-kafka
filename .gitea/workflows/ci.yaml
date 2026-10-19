@@ -7,6 +7,21 @@
 # pacts from this run (notifications' pact is only on the broker, so adoptions-service's verification is skipped). The
 # pacts are also committed, and the consumer jobs fail if a run changes them.
 #
+# Broker lanes, as in petstore-inc: every job that talks to a Pact Broker runs once per lane in matrix.broker:
+#   oss       the Pact Broker in vars.PACT_BROKER_BASE_URL (basic auth), always
+#   pactflow  PactFlow (vars.PACTFLOW_BASE_URL, token in secrets.PACTFLOW_TOKEN) when vars.PACTFLOW_ENABLED is 'true'
+# The lanes are independent tracks of the same pacts and verifications, each with its own can-i-deploy and deployments;
+# neither reads the other. Each job maps its lane onto the PACT_BROKER_* variables (PactFlow blanks the basic-auth
+# pair). PactFlow-lane job names end in "· PactFlow". petstore-inc's franchisee job publishes these pacticipants to
+# the same PactFlow tenant at a pinned commit of this repo: both use this repo's SHAs as versions, so they add up
+# rather than collide.
+#
+# AsyncAPI: specs/asyncapi documents what pets-service and adoptions-service publish and consume, and the message pacts
+# reference its operationIds. The asyncapi job checks the committed pacts against it (openapi-pact-comparator) and,
+# with PactFlow enabled, runs Drift against the real services on a throwaway broker (services/drift/run-asyncapi.sh).
+# The PactFlow lane publishes each document, with Drift's results, as the provider contract of pets-service-events and
+# adoptions-service-events.
+#
 # Behind a TLS-intercepting proxy, job containers need the proxy CA mounted at /etc/ssl/certs/ca-certificates.crt (see
 # the runner config in smartbear-all-the-things/infra/gitea).
 name: ci
@@ -21,16 +36,20 @@ env:
   SSL_CERT_FILE: /etc/ssl/certs/ca-certificates.crt
   npm_config_ignore_scripts: "true"   # never run dependency install scripts in CI
   PACT_DO_NOT_TRACK: "true"
-  PACT_BROKER_BASE_URL: ${{ vars.PACT_BROKER_BASE_URL }}
-  PACT_BROKER_USERNAME: ${{ vars.PACT_BROKER_USERNAME }}
 
 jobs:
   services:
-    name: Services (unit tests, consumer pacts)
+    name: Services (unit tests, consumer pacts)${{ matrix.broker == 'pactflow' && ' · PactFlow' || '' }}
     runs-on: ubuntu-latest
+    if: ${{ matrix.broker == 'oss' || vars.PACTFLOW_ENABLED == 'true' }}
+    strategy:
+      matrix:
+        broker: [oss, pactflow]
     env:
-      PACT_BROKER_TOKEN: ${{ secrets.PACT_BROKER_TOKEN }}
-      PACT_BROKER_PASSWORD: ${{ secrets.PACT_BROKER_PASSWORD }}
+      PACT_BROKER_BASE_URL: ${{ matrix.broker == 'pactflow' && vars.PACTFLOW_BASE_URL || vars.PACT_BROKER_BASE_URL }}
+      PACT_BROKER_TOKEN: ${{ matrix.broker == 'pactflow' && secrets.PACTFLOW_TOKEN || secrets.PACT_BROKER_TOKEN }}
+      PACT_BROKER_USERNAME: ${{ matrix.broker != 'pactflow' && vars.PACT_BROKER_USERNAME || '' }}
+      PACT_BROKER_PASSWORD: ${{ matrix.broker != 'pactflow' && secrets.PACT_BROKER_PASSWORD || '' }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -50,21 +69,27 @@ jobs:
           [ -z "$(git ls-files --others --exclude-standard -- services/pacts)" ] || { echo "untracked pacts: commit them"; exit 1; }
       - uses: actions/upload-artifact@v3   # v4 isn't supported by Gitea's artifact server
         with:
-          name: pacts-services
+          name: pacts-services-${{ matrix.broker }}
           path: services/pacts
       - name: Publish pacts
-        if: ${{ vars.PACT_BROKER_BASE_URL != '' }}
+        if: ${{ env.PACT_BROKER_BASE_URL != '' }}
         working-directory: services
         run: |
           [ -n "$PACT_BROKER_TOKEN" ] || unset PACT_BROKER_TOKEN   # an empty token gets a 400 from the broker
           npm run pact:publish
 
   web-ui:
-    name: web-ui (typecheck, build, consumer pact)
+    name: web-ui (typecheck, build, consumer pact)${{ matrix.broker == 'pactflow' && ' · PactFlow' || '' }}
     runs-on: ubuntu-latest
+    if: ${{ matrix.broker == 'oss' || vars.PACTFLOW_ENABLED == 'true' }}
+    strategy:
+      matrix:
+        broker: [oss, pactflow]
     env:
-      PACT_BROKER_TOKEN: ${{ secrets.PACT_BROKER_TOKEN }}
-      PACT_BROKER_PASSWORD: ${{ secrets.PACT_BROKER_PASSWORD }}
+      PACT_BROKER_BASE_URL: ${{ matrix.broker == 'pactflow' && vars.PACTFLOW_BASE_URL || vars.PACT_BROKER_BASE_URL }}
+      PACT_BROKER_TOKEN: ${{ matrix.broker == 'pactflow' && secrets.PACTFLOW_TOKEN || secrets.PACT_BROKER_TOKEN }}
+      PACT_BROKER_USERNAME: ${{ matrix.broker != 'pactflow' && vars.PACT_BROKER_USERNAME || '' }}
+      PACT_BROKER_PASSWORD: ${{ matrix.broker != 'pactflow' && secrets.PACT_BROKER_PASSWORD || '' }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -84,22 +109,28 @@ jobs:
           [ -z "$(git ls-files --others --exclude-standard -- web-ui/pacts)" ] || { echo "untracked pacts: commit them"; exit 1; }
       - uses: actions/upload-artifact@v3
         with:
-          name: pacts-web-ui
+          name: pacts-web-ui-${{ matrix.broker }}
           path: web-ui/pacts
       - name: Publish pacts
-        if: ${{ vars.PACT_BROKER_BASE_URL != '' }}
+        if: ${{ env.PACT_BROKER_BASE_URL != '' }}
         working-directory: web-ui
         run: |
           [ -n "$PACT_BROKER_TOKEN" ] || unset PACT_BROKER_TOKEN   # an empty token gets a 400 from the broker
           npm run pact:publish
 
   verify:
-    name: Verify pets-service and adoptions-service (Kafka messages + REST)
+    name: Verify pets-service and adoptions-service (Kafka messages + REST)${{ matrix.broker == 'pactflow' && ' · PactFlow' || '' }}
     runs-on: ubuntu-latest
     needs: [services, web-ui]
+    if: ${{ matrix.broker == 'oss' || vars.PACTFLOW_ENABLED == 'true' }}
+    strategy:
+      matrix:
+        broker: [oss, pactflow]
     env:
-      PACT_BROKER_TOKEN: ${{ secrets.PACT_BROKER_TOKEN }}
-      PACT_BROKER_PASSWORD: ${{ secrets.PACT_BROKER_PASSWORD }}
+      PACT_BROKER_BASE_URL: ${{ matrix.broker == 'pactflow' && vars.PACTFLOW_BASE_URL || vars.PACT_BROKER_BASE_URL }}
+      PACT_BROKER_TOKEN: ${{ matrix.broker == 'pactflow' && secrets.PACTFLOW_TOKEN || secrets.PACT_BROKER_TOKEN }}
+      PACT_BROKER_USERNAME: ${{ matrix.broker != 'pactflow' && vars.PACT_BROKER_USERNAME || '' }}
+      PACT_BROKER_PASSWORD: ${{ matrix.broker != 'pactflow' && secrets.PACT_BROKER_PASSWORD || '' }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -110,31 +141,106 @@ jobs:
       # Used only without a broker; with one, the verifier fetches pacts by consumer version selectors.
       - uses: actions/download-artifact@v3
         with:
-          name: pacts-services
+          name: pacts-services-${{ matrix.broker }}
           path: services/pacts
       - uses: actions/download-artifact@v3
         with:
-          name: pacts-web-ui
+          name: pacts-web-ui-${{ matrix.broker }}
           path: web-ui/pacts
       - working-directory: services
         run: npm ci --ignore-scripts
       # Publishes verification results to the broker when one is set (CI=true).
       - working-directory: services
-        run: npm run test:pact:provider
+        run: |
+          [ -n "$PACT_BROKER_TOKEN" ] || unset PACT_BROKER_TOKEN   # an empty token gets a 400 from the broker
+          npm run test:pact:provider
 
-  # Gates each pacticipant on what is deployed to the local environment. On main, deploy does this itself.
-  can-i-deploy:
-    name: Pact can-i-deploy (${{ matrix.pacticipant }})
+  # The message pacts against specs/asyncapi (both lanes), then Drift against the real services (with PactFlow).
+  asyncapi:
+    name: AsyncAPI (pacts vs specs, Drift)${{ matrix.broker == 'pactflow' && ' · PactFlow' || '' }}
     runs-on: ubuntu-latest
-    needs: [verify]
-    if: ${{ vars.PACT_BROKER_BASE_URL != '' && !(github.event_name == 'push' && github.ref == 'refs/heads/main') }}
+    if: ${{ matrix.broker == 'oss' || vars.PACTFLOW_ENABLED == 'true' }}
     strategy:
       fail-fast: false
       matrix:
+        broker: [oss, pactflow]
+    env:
+      PACT_BROKER_BASE_URL: ${{ matrix.broker == 'pactflow' && vars.PACTFLOW_BASE_URL || vars.PACT_BROKER_BASE_URL }}
+      PACT_BROKER_TOKEN: ${{ matrix.broker == 'pactflow' && secrets.PACTFLOW_TOKEN || secrets.PACT_BROKER_TOKEN }}
+      PACT_BROKER_USERNAME: ${{ matrix.broker != 'pactflow' && vars.PACT_BROKER_USERNAME || '' }}
+      PACT_BROKER_PASSWORD: ${{ matrix.broker != 'pactflow' && secrets.PACT_BROKER_PASSWORD || '' }}
+      GIT_SHA: ${{ github.sha }}
+      GIT_BRANCH: ${{ github.head_ref || github.ref_name }}
+    # A throwaway broker for Drift. Service containers share the job's network namespace on Gitea, so the job reaches
+    # it on localhost, and each lane gets its own ports (clear of petstore-inc's 19092-19095).
+    services:
+      kafka:
+        image: apache/kafka:3.9.1
+        env:
+          KAFKA_NODE_ID: 1
+          KAFKA_PROCESS_ROLES: broker,controller
+          KAFKA_LISTENERS: ${{ matrix.broker == 'pactflow' && 'PLAINTEXT://:19194,CONTROLLER://:19195' || 'PLAINTEXT://:19192,CONTROLLER://:19193' }}
+          KAFKA_ADVERTISED_LISTENERS: ${{ matrix.broker == 'pactflow' && 'PLAINTEXT://localhost:19194' || 'PLAINTEXT://localhost:19192' }}
+          KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
+          KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+          KAFKA_CONTROLLER_QUORUM_VOTERS: ${{ matrix.broker == 'pactflow' && '1@localhost:19195' || '1@localhost:19193' }}
+          KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+          KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+          KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: services/package-lock.json
+      # Each message pact's comments.references.AsyncAPI.operationId must name a send operation whose message matches.
+      # pets-service is the only provider with committed message pacts (notifications' pact is in petstore-inc).
+      - name: Message pacts match the AsyncAPI documents
+        if: ${{ matrix.broker == 'oss' }}   # the same files in both lanes
+        run: |
+          npx --yes @pactflow/openapi-pact-comparator@2.4.0 --asyncapi specs/asyncapi/pets-service.asyncapi.yaml \
+            services/pacts/adoptions-service-pets-service.json services/pacts/websocket-service-pets-service.json
+      - working-directory: services
+        if: ${{ vars.PACTFLOW_ENABLED == 'true' }}
+        run: npm ci --ignore-scripts
+      - name: Drift verify the AsyncAPI documents (and publish them in the PactFlow lane)
+        if: ${{ vars.PACTFLOW_ENABLED == 'true' }}   # Drift needs a PactFlow tenant even to verify
+        env:
+          PACTFLOW_URL: ${{ vars.PACTFLOW_BASE_URL }}
+          PACTFLOW_TOKEN: ${{ secrets.PACTFLOW_TOKEN }}
+          KAFKA_BOOTSTRAP: ${{ matrix.broker == 'pactflow' && 'localhost:19194' || 'localhost:19192' }}
+          # Ports of their own (petstore-inc uses 18082-18083): the harness, then pets-service and adoptions-service.
+          DRIFT_SERVER_PORT: ${{ matrix.broker == 'pactflow' && '18183' || '18182' }}
+          PETS_PORT: ${{ matrix.broker == 'pactflow' && '18186' || '18184' }}
+          ADOPTIONS_PORT: ${{ matrix.broker == 'pactflow' && '18187' || '18185' }}
+          DRIFT_PUBLISH_PROVIDER_CONTRACT: ${{ matrix.broker == 'pactflow' && 'true' || 'false' }}
+          BUILD_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: bash services/drift/run-asyncapi.sh
+      - name: Upload Drift AsyncAPI results
+        if: ${{ always() && vars.PACTFLOW_ENABLED == 'true' }}
+        uses: actions/upload-artifact@v3
+        with:
+          name: petstore-kafka-drift-asyncapi-${{ matrix.broker }}
+          path: ${{ runner.temp }}/petstore-kafka-drift-asyncapi/
+          if-no-files-found: ignore
+
+  # Gates each pacticipant on what is deployed to the local environment, per lane. On main, deploy does this itself.
+  can-i-deploy:
+    name: Pact can-i-deploy (${{ matrix.pacticipant }})${{ matrix.broker == 'pactflow' && ' · PactFlow' || '' }}
+    runs-on: ubuntu-latest
+    needs: [verify, asyncapi]
+    if: ${{ ((matrix.broker == 'oss' && vars.PACT_BROKER_BASE_URL != '') || (matrix.broker == 'pactflow' && vars.PACTFLOW_ENABLED == 'true')) && !(github.event_name == 'push' && github.ref == 'refs/heads/main') }}
+    strategy:
+      fail-fast: false
+      matrix:
+        broker: [oss, pactflow]
         pacticipant: [pets-service, adoptions-service, websocket-service, web-ui]
     env:
-      PACT_BROKER_TOKEN: ${{ secrets.PACT_BROKER_TOKEN }}
-      PACT_BROKER_PASSWORD: ${{ secrets.PACT_BROKER_PASSWORD }}
+      PACT_BROKER_BASE_URL: ${{ matrix.broker == 'pactflow' && vars.PACTFLOW_BASE_URL || vars.PACT_BROKER_BASE_URL }}
+      PACT_BROKER_TOKEN: ${{ matrix.broker == 'pactflow' && secrets.PACTFLOW_TOKEN || secrets.PACT_BROKER_TOKEN }}
+      PACT_BROKER_USERNAME: ${{ matrix.broker != 'pactflow' && vars.PACT_BROKER_USERNAME || '' }}
+      PACT_BROKER_PASSWORD: ${{ matrix.broker != 'pactflow' && secrets.PACT_BROKER_PASSWORD || '' }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -147,18 +253,26 @@ jobs:
       - working-directory: services
         run: |
           [ -n "$PACT_BROKER_TOKEN" ] || unset PACT_BROKER_TOKEN   # an empty token gets a 400 from the broker
+          # A fresh PactFlow workspace has no environments, and can-i-deploy --to-environment needs `local`.
+          npx pact-broker list-environments | grep -qw local || npx pact-broker create-environment --name local
           npm run pact:can-i-deploy -- --pacticipant "${{ matrix.pacticipant }}" --version "${{ github.sha }}"
 
-  # Main is what's "deployed" to the local environment. The provider goes first, so that the consumers' can-i-deploy
-  # finds the pets-service version they were verified against.
+  # Main is what's "deployed" to the local environment, per lane. The provider goes first, so that the consumers'
+  # can-i-deploy finds the pets-service version they were verified against.
   deploy:
-    name: Record deployments to local
+    name: Record deployments to local${{ matrix.broker == 'pactflow' && ' · PactFlow' || '' }}
     runs-on: ubuntu-latest
-    needs: [verify]
-    if: ${{ vars.PACT_BROKER_BASE_URL != '' && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    needs: [verify, asyncapi]
+    if: ${{ ((matrix.broker == 'oss' && vars.PACT_BROKER_BASE_URL != '') || (matrix.broker == 'pactflow' && vars.PACTFLOW_ENABLED == 'true')) && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        broker: [oss, pactflow]
     env:
-      PACT_BROKER_TOKEN: ${{ secrets.PACT_BROKER_TOKEN }}
-      PACT_BROKER_PASSWORD: ${{ secrets.PACT_BROKER_PASSWORD }}
+      PACT_BROKER_BASE_URL: ${{ matrix.broker == 'pactflow' && vars.PACTFLOW_BASE_URL || vars.PACT_BROKER_BASE_URL }}
+      PACT_BROKER_TOKEN: ${{ matrix.broker == 'pactflow' && secrets.PACTFLOW_TOKEN || secrets.PACT_BROKER_TOKEN }}
+      PACT_BROKER_USERNAME: ${{ matrix.broker != 'pactflow' && vars.PACT_BROKER_USERNAME || '' }}
+      PACT_BROKER_PASSWORD: ${{ matrix.broker != 'pactflow' && secrets.PACT_BROKER_PASSWORD || '' }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -171,6 +285,7 @@ jobs:
       - working-directory: services
         run: |
           [ -n "$PACT_BROKER_TOKEN" ] || unset PACT_BROKER_TOKEN   # an empty token gets a 400 from the broker
+          npx pact-broker list-environments | grep -qw local || npx pact-broker create-environment --name local
           for pacticipant in pets-service adoptions-service websocket-service web-ui; do
             npm run pact:can-i-deploy -- --pacticipant "$pacticipant" --version "${{ github.sha }}"
             npm run pact:record-deployment -- --pacticipant "$pacticipant" --version "${{ github.sha }}"

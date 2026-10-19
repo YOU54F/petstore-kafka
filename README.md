@@ -35,6 +35,20 @@ You can see a live demo of this running at https://petstore-kafka.swagger.io
 - AsyncAPI for **Pets** service https://app.swaggerhub.com/apis/SwaggerPMTests/petstore-kafka-pets
 - AsyncAPI for **Adoptions** service https://app.swaggerhub.com/apis/SwaggerPMTests/petstore-kafka-adoptions
 
+AsyncAPI 3.0 documents for the Kafka topics are also in [specs/asyncapi](./specs/asyncapi): one each for pets-service
+and adoptions-service, with an operationId for everything each one sends and receives. The consumers' message pacts
+reference those operationIds (`.reference('AsyncAPI', 'operationId', ...)`), so they can be checked against the documents:
+
+```sh
+npm_config_ignore_scripts=true npx --yes @pactflow/openapi-pact-comparator@2.4.0 \
+  --asyncapi specs/asyncapi/pets-service.asyncapi.yaml services/pacts/*-pets-service.json
+```
+
+[services/drift/run-asyncapi.sh](./services/drift/run-asyncapi.sh) checks the real services against the documents with
+PactFlow Drift: it needs a Kafka broker in `KAFKA_BOOTSTRAP` and a PactFlow tenant
+(`PACTFLOW_URL`, `PACTFLOW_TOKEN`), and with `DRIFT_PUBLISH_PROVIDER_CONTRACT=true` publishes each document as the
+provider contract of `pets-service-events` / `adoptions-service-events`.
+
 
 ## Developing
 
@@ -100,6 +114,10 @@ for the `local` environment; pass `--pacticipant` and `--version`.
 In CI ([.gitea/workflows/ci.yaml](./.gitea/workflows/ci.yaml)), set `PACT_BROKER_BASE_URL` (and `PACT_BROKER_USERNAME`)
 as repository variables and the token or password as secrets. The workflow then gates pull requests with `can-i-deploy`
 against `local`, and on `main` records each deployment, pets-service first.
+
+With the repository variables `PACTFLOW_ENABLED=true` and `PACTFLOW_BASE_URL`, and the secret `PACTFLOW_TOKEN`, every
+broker job also runs in a PactFlow lane (job names end in "· PactFlow"), with its own `can-i-deploy` and deployments.
+The `asyncapi` job runs the comparator and, with PactFlow, Drift; the PactFlow lane publishes the provider contracts.
 
 ### ReadyAPI
 

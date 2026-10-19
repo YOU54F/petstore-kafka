@@ -1,0 +1,131 @@
+{
+  "consumer": {
+    "name": "web-ui"
+  },
+  "interactions": [
+    {
+      "description": "A request to create a pet called foo",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "a pet called foo does not exist"
+        }
+      ],
+      "request": {
+        "body": {
+          "content": {
+            "location": "Plett",
+            "name": "foo"
+          },
+          "contentType": "application/json",
+          "encoded": false
+        },
+        "headers": {
+          "Content-Type": [
+            "application/json"
+          ]
+        },
+        "matchingRules": {
+          "body": {
+            "$.location": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.name": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            }
+          }
+        },
+        "method": "POST",
+        "path": "/pets"
+      },
+      "response": {
+        "status": 201
+      },
+      "type": "Synchronous/HTTP"
+    },
+    {
+      "description": "A request to get pets",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "some pets exist",
+          "params": {
+            "location": "Plett",
+            "status": "available"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "path": "/pets",
+        "query": {
+          "location": [
+            "Plett"
+          ],
+          "status": [
+            "available"
+          ]
+        }
+      },
+      "response": {
+        "body": {
+          "content": [
+            {
+              "id": "6c9f429c-3f5d-4a55-88bf-026b2b404710",
+              "location": "Plett",
+              "name": "Max",
+              "status": "available"
+            }
+          ],
+          "contentType": "application/json",
+          "encoded": false
+        },
+        "headers": {
+          "Content-Type": [
+            "application/json"
+          ]
+        },
+        "matchingRules": {
+          "body": {
+            "$": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type",
+                  "min": 1
+                }
+              ]
+            }
+          }
+        },
+        "status": 200
+      },
+      "type": "Synchronous/HTTP"
+    }
+  ],
+  "metadata": {
+    "pact-js": {
+      "version": "17.1.4"
+    },
+    "pactRust": {
+      "ffi": "0.5.8",
+      "models": "1.3.16"
+    },
+    "pactSpecification": {
+      "version": "4.0"
+    }
+  },
+  "provider": {
+    "name": "pets-service"
+  }
+}

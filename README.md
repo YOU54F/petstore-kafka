@@ -76,7 +76,8 @@ against them. Neither needs Kafka.
 | websocket-service | `pets.added` messages | [services/websocket/pets-added.consumer.pact.test.js](./services/websocket/pets-added.consumer.pact.test.js) |
 | web-ui | `GET /api/pets`, `POST /api/pets` | [web-ui/src/pets.store.test.ts](./web-ui/src/pets.store.test.ts) |
 
-The consumer tests write pacts to `services/pacts` and `web-ui/pacts`. The provider test,
+The consumer tests write pacts to `services/pacts` and `web-ui/pacts`, which are committed (CI fails if a run changes
+them) so other repos can verify against a pinned commit. The provider test,
 [services/pets/pets-service.provider.pact.test.js](./services/pets/pets-service.provider.pact.test.js), starts the pets
 API with a stub producer and checks the messages pets-service builds in
 [services/pets/messages.js](./services/pets/messages.js), so it needs no Kafka.

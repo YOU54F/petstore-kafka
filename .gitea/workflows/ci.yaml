@@ -4,7 +4,8 @@
 # REST API. adoptions-service is also a provider: petstore-inc's notifications consumes the pets.statusChanged messages
 # it sends, with the adopter's id. The consumer pacts publish to a broker when PACT_BROKER_BASE_URL is set (a repo
 # variable), then both providers verify them and can-i-deploy gates each pacticipant. Without a broker, verify uses the
-# pacts from this run (notifications' pact is only on the broker, so adoptions-service's verification is skipped).
+# pacts from this run (notifications' pact is only on the broker, so adoptions-service's verification is skipped). The
+# pacts are also committed, and the consumer jobs fail if a run changes them.
 #
 # Behind a TLS-intercepting proxy, job containers need the proxy CA mounted at /etc/ssl/certs/ca-certificates.crt (see
 # the runner config in smartbear-all-the-things/infra/gitea).
@@ -43,6 +44,10 @@ jobs:
         run: npm test
       - working-directory: services
         run: npm run test:pact:consumer
+      - name: Check the committed pacts are current
+        run: |   # pacts are committed so other repos (petstore-inc's franchisee job) can verify against them by SHA
+          git diff --exit-code -- services/pacts
+          [ -z "$(git ls-files --others --exclude-standard -- services/pacts)" ] || { echo "untracked pacts: commit them"; exit 1; }
       - uses: actions/upload-artifact@v3   # v4 isn't supported by Gitea's artifact server
         with:
           name: pacts-services
@@ -73,6 +78,10 @@ jobs:
         run: npm run build
       - working-directory: web-ui
         run: npm test
+      - name: Check the committed pacts are current
+        run: |   # pacts are committed so other repos (petstore-inc's franchisee job) can verify against them by SHA
+          git diff --exit-code -- web-ui/pacts
+          [ -z "$(git ls-files --others --exclude-standard -- web-ui/pacts)" ] || { echo "untracked pacts: commit them"; exit 1; }
       - uses: actions/upload-artifact@v3
         with:
           name: pacts-web-ui

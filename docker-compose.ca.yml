@@ -1,0 +1,15 @@
+# Passes a CA bundle (public roots + the proxy root) to the image builds, so `npm ci` works behind a
+# TLS-intercepting proxy such as Zscaler. See the header of docker-compose.yml.
+# The bundle travels as an environment secret: Compose builds through bake, which won't read files outside the project.
+x-ca-build: &ca-build
+  secrets: [ca]
+
+services:
+  web-ui: { build: { <<: *ca-build } }
+  pets: { build: { <<: *ca-build } }
+  adoptions: { build: { <<: *ca-build } }
+  websocket: { build: { <<: *ca-build } }
+
+secrets:
+  ca:
+    environment: CA_PEM

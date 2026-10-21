@@ -1,0 +1,95 @@
+const crypto = require('node:crypto')
+const fs = require('node:fs')
+const path = require('node:path')
+const { Verifier, providerWithMetadata } = require('@pact-foundation/pact')
+const { PACT_DIR, tempDb, gitInfo } = require('../test/support')
+const { createApp } = require('./service')
+const { petAdded, petStatusChanged } = require('./messages')
+
+// pets-service against everything its consumers expect of it: web-ui's REST pact as pets-service, and the events that
+// adoptions-service and websocket-service consume as pets-service-events (the pacticipant whose provider contract is
+// the AsyncAPI document, specs/asyncapi/pets-service.asyncapi.yaml). No Kafka: the app gets a stub producer, and
+// message interactions are answered by the same builders the service sends with.
+
+const db = tempDb('pets-cache')
+const producer = { send: async () => {} }
+const examplePet = () => ({ id: crypto.randomUUID(), name: 'Max', location: 'Plett', status: 'pending' })
+
+// Each message's topic travels as Kafka metadata, so it is part of the contract too.
+const asMessage = ({ topic, value }) => providerWithMetadata(() => value, { topic })
+
+let server
+beforeAll(async () => {
+  server = createApp({ producer, db }).listen(0, '127.0.0.1')
+  await new Promise((resolve) => server.once('listening', resolve))
+})
+afterAll(() => new Promise((resolve) => server.close(resolve)))
+
+const messageProviders = {
+  'a pet was added': asMessage(petAdded(examplePet())),
+  'a pet status change': asMessage(petStatusChanged(examplePet(), 'available')),
+}
+
+// Without a broker, the provider's pacts in PACT_DIR plus any extra local files.
+function pactSource(provider, extra = []) {
+  const { PACT_BROKER_BASE_URL, PACT_BROKER_TOKEN, PACT_BROKER_USERNAME, PACT_BROKER_PASSWORD } = process.env
+
+  if(!PACT_BROKER_BASE_URL) {
+    const local = [
+      ...fs.readdirSync(PACT_DIR).filter((f) => f.endsWith(`-${provider}.json`)).map((f) => path.join(PACT_DIR, f)),
+      ...extra,
+    ]
+    return { pactUrls: local.filter((f) => fs.existsSync(f)) }
+  }
+
+  const { version, branch } = gitInfo()
+  // pact-core validates every auth key that is present, even an undefined one, so only add the ones in use.
+  const auth = PACT_BROKER_TOKEN
+    ? { pactBrokerToken: PACT_BROKER_TOKEN }
+    : { pactBrokerUsername: PACT_BROKER_USERNAME, pactBrokerPassword: PACT_BROKER_PASSWORD }
+  return {
+    pactBrokerUrl: PACT_BROKER_BASE_URL,
+    ...auth,
+    consumerVersionSelectors: [{ mainBranch: true }, { matchingBranch: true }, { deployedOrReleased: true }],
+    enablePending: true,
+    // WIP pacts: also verify consumers' feature-branch pacts that no successful verification covers yet (e.g. a new
+    // consumer such as petstore-inc's notifications, before its branch merges). They can't fail the build (pending).
+    includeWipPactsSince: process.env.PACT_INCLUDE_WIP_SINCE || '2026-01-01',
+    publishVerificationResult: process.env.CI === 'true',
+    providerVersion: version,
+    providerVersionBranch: branch,
+  }
+}
+
+const verify = (provider, options) =>
+  new Verifier({ provider, logLevel: process.env.LOG_LEVEL || 'warn', ...options }).verifyProvider()
+
+describe('pets-service', () => {
+  it('meets the expectations of its REST consumers', () => {
+    return verify('pets-service', {
+      providerBaseUrl: `http://127.0.0.1:${server.address().port}/api`,
+      ...pactSource('pets-service', [path.resolve(__dirname, '../../web-ui/pacts/web-ui-pets-service.json')]),
+
+      stateHandlers: {
+        'some pets exist': async ({ location, status }) => {
+          const pet = { ...examplePet(), location, status }
+          db.dbPut(pet.id, pet)
+        },
+        'a pet called foo does not exist': async () => {},
+        'a pet exists': async () => {},
+      },
+      // Consumer versions already deployed to local still name pets-service as their message provider, so answer
+      // those too. Drop this once every consumer has redeployed with a pact against pets-service-events.
+      messageProviders,
+    })
+  }, 60_000)
+})
+
+describe('pets-service-events', () => {
+  it('meets the expectations of its event consumers', () => {
+    return verify('pets-service-events', {
+      ...pactSource('pets-service-events'),
+      messageProviders,
+    })
+  }, 60_000)
+})

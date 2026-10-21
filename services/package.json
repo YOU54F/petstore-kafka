@@ -1,0 +1,31 @@
+{
+  "name": "petstore-kafka-services",
+  "private": true,
+  "license": "MIT",
+  "engines": {
+    "node": ">=24"
+  },
+  "workspaces": [
+    "lib",
+    "pets",
+    "adoptions",
+    "websocket"
+  ],
+  "scripts": {
+    "test": "jest --testPathIgnorePatterns '\\.pact\\.test\\.js$'",
+    "test:pact:consumer": "jest --testMatch '**/*.consumer.pact.test.js'",
+    "test:pact:provider": "jest --runInBand --testMatch '**/*.provider.pact.test.js'",
+    "pact:publish": "pact-broker publish pacts --auto-detect-version-properties",
+    "pact:can-i-deploy": "pact-broker can-i-deploy --to-environment local --retry-while-unknown 6 --retry-interval 10",
+    "pact:record-deployment": "pact-broker record-deployment --environment local"
+  },
+  "jest": {
+    "testEnvironment": "node"
+  },
+  "devDependencies": {
+    "@pact-foundation/pact": "17.1.4",
+    "@pact-foundation/pact-cli": "18.1.2",
+    "jest": "30.5.2",
+    "nodemon": "3.1.14"
+  }
+}

@@ -1,0 +1,211 @@
+# adoptions-service's Kafka topics: what it publishes and what it consumes (services/adoptions).
+#
+# Flow: POST /api/adoptions publishes the request to adoptions.requested. adoptions-service consumes it and marks the
+# adoption requested (adoptions.statusChanged), then checks each pet against the statuses it caches from
+# pets.statusChanged: if any isn't available the adoption is rejected, otherwise its pets go on hold and the adoption
+# becomes available. PATCH /api/adoptions/{id} approves or denies it, which claims the pets (adopted) or releases them
+# (available) on pets.statusChanged. Those pet status changes carry the adopter's id when the request named one.
+#
+# Consumers' message pacts reference these operations by AsyncAPI operationId:
+#   - petstore-inc's notifications: publishPetAdoptionStatusChanged
+# pets-service's side of pets.statusChanged is in pets-service.asyncapi.yaml.
+asyncapi: 3.0.0
+info:
+  title: Petstore Kafka adoptions events
+  version: 1.0.0
+  description: Kafka topics owned or consumed by adoptions-service.
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+  tags:
+    - name: adoptions
+defaultContentType: application/json
+servers:
+  local:
+    host: localhost:9092
+    protocol: kafka
+    description: Single-node KRaft broker from docker-compose.yml (kafka:29092 inside the network).
+channels:
+  adoptionsRequested:
+    address: adoptions.requested
+    description: Every adoption request, as POSTed to /api/adoptions with its id. One message per request.
+    messages:
+      adoptionRequested:
+        $ref: '#/components/messages/AdoptionRequested'
+  adoptionsStatusChanged:
+    address: adoptions.statusChanged
+    description: Every change to an adoption's status.
+    messages:
+      adoptionStatusChanged:
+        $ref: '#/components/messages/AdoptionStatusChanged'
+  petsStatusChanged:
+    address: pets.statusChanged
+    description: |
+      Every change to a pet's adoption status. adoptions-service sends id and status (and the adopter's id, when the
+      adoption named one); pets-service sends the whole pet with its new status.
+    messages:
+      petAdoptionStatusChanged:
+        $ref: '#/components/messages/PetAdoptionStatusChanged'
+      petStatusChanged:
+        $ref: '#/components/messages/PetStatusChanged'
+operations:
+  publishAdoptionRequested:
+    action: send
+    summary: adoptions-service publishes each adoption requested with POST /api/adoptions.
+    description: websocket-service consumes it to remember where each adoption is.
+    channel:
+      $ref: '#/channels/adoptionsRequested'
+    messages:
+      - $ref: '#/channels/adoptionsRequested/messages/adoptionRequested'
+  publishAdoptionStatusChanged:
+    action: send
+    summary: adoptions-service publishes each step of an adoption.
+    description: |
+      requested once the request is taken, then rejected (with reasons) or available; PATCH /api/adoptions/{id} sends
+      the whole adoption with approved or denied.
+    channel:
+      $ref: '#/channels/adoptionsStatusChanged'
+    messages:
+      - $ref: '#/channels/adoptionsStatusChanged/messages/adoptionStatusChanged'
+  publishPetAdoptionStatusChanged:
+    action: send
+    summary: adoptions-service holds, claims or releases an adoption's pets.
+    description: |
+      onhold when an adoption becomes available, adopted when it is approved and available again when it is denied.
+      Carries adopterId when the adoption request named one; petstore-inc's notifications service tells that adopter.
+    channel:
+      $ref: '#/channels/petsStatusChanged'
+    messages:
+      - $ref: '#/channels/petsStatusChanged/messages/petAdoptionStatusChanged'
+  onAdoptionRequested:
+    action: receive
+    summary: adoptions-service stores the request and marks it requested on adoptions.statusChanged.
+    channel:
+      $ref: '#/channels/adoptionsRequested'
+    messages:
+      - $ref: '#/channels/adoptionsRequested/messages/adoptionRequested'
+  onAdoptionStatusChanged:
+    action: receive
+    summary: adoptions-service stores the new status and takes the adoption's next step.
+    channel:
+      $ref: '#/channels/adoptionsStatusChanged'
+    messages:
+      - $ref: '#/channels/adoptionsStatusChanged/messages/adoptionStatusChanged'
+  onPetStatusChanged:
+    action: receive
+    summary: adoptions-service caches each pet's status, from pets-service and from itself.
+    description: Adoption requests are checked against it. Only id and status are read.
+    channel:
+      $ref: '#/channels/petsStatusChanged'
+    messages:
+      - $ref: '#/channels/petsStatusChanged/messages/petStatusChanged'
+components:
+  messages:
+    AdoptionRequested:
+      name: AdoptionRequested
+      title: Adoption requested
+      contentType: application/json
+      correlationId:
+        location: $message.payload#/id
+      payload:
+        $ref: '#/components/schemas/Adoption'
+    AdoptionStatusChanged:
+      name: AdoptionStatusChanged
+      title: Adoption status changed
+      contentType: application/json
+      correlationId:
+        location: $message.payload#/id
+      payload:
+        $ref: '#/components/schemas/AdoptionStatusChange'
+    PetAdoptionStatusChanged:
+      name: PetAdoptionStatusChanged
+      title: Pet status changed by an adoption
+      contentType: application/json
+      correlationId:
+        location: $message.payload#/id
+      payload:
+        $ref: '#/components/schemas/PetAdoptionStatusChange'
+    PetStatusChanged:
+      name: PetStatusChanged
+      title: Pet status changed
+      description: Any pet status change, from pets-service or adoptions-service.
+      contentType: application/json
+      correlationId:
+        location: $message.payload#/id
+      payload:
+        $ref: '#/components/schemas/PetStatusChange'
+  schemas:
+    Id:
+      type: string
+      format: uuid
+    AdopterId:
+      type: string
+      minLength: 1
+      description: The adopter's customer id (e.g. a Petstore Inc customer), when the adoption request named one.
+    AdoptionStatus:
+      type: string
+      enum: [requested, available, rejected, approved, denied]
+    Adoption:
+      type: object
+      required: [id, pets]
+      properties:
+        id:
+          $ref: '#/components/schemas/Id'
+        pets:
+          type: array
+          description: The ids of the pets to adopt.
+          items:
+            $ref: '#/components/schemas/Id'
+        location:
+          type: string
+          description: The store, e.g. Plett. Websocket clients subscribe by location.
+        adopterId:
+          $ref: '#/components/schemas/AdopterId'
+    AdoptionStatusChange:
+      type: object
+      required: [id, status]
+      properties:
+        id:
+          $ref: '#/components/schemas/Id'
+        status:
+          $ref: '#/components/schemas/AdoptionStatus'
+        reasons:
+          type: array
+          description: Why the adoption was rejected, one entry for each pet that wasn't available.
+          items:
+            type: object
+            required: [petId, message]
+            properties:
+              petId:
+                $ref: '#/components/schemas/Id'
+              message:
+                type: string
+                description: The pet's status at the time.
+        pets:
+          type: array
+          items:
+            $ref: '#/components/schemas/Id'
+        location:
+          type: string
+        adopterId:
+          $ref: '#/components/schemas/AdopterId'
+    PetAdoptionStatusChange:
+      type: object
+      required: [id, status]
+      properties:
+        id:
+          $ref: '#/components/schemas/Id'
+        status:
+          type: string
+          enum: [available, onhold, adopted]
+        adopterId:
+          $ref: '#/components/schemas/AdopterId'
+    PetStatusChange:
+      type: object
+      required: [id, status]
+      properties:
+        id:
+          $ref: '#/components/schemas/Id'
+        status:
+          type: string
+          enum: [pending, available, onhold, adopted]

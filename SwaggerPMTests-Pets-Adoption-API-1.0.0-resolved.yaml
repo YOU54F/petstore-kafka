@@ -1,0 +1,331 @@
+---
+openapi: 3.0.0
+info:
+  title: Pets and Adoption API
+  description: |
+    An API for tracking **Pets** and **Pet Adoptions** across our event and REST based petstore. This OpenAPI definition describes the RESTful APIs offered by the store.
+
+    Links:
+    - [The code repository housing the implementation](https://github.com/swagger-api/petstore-kafka)
+
+    Other useful information related to this API:
+  termsOfService: http://swagger.io/terms/
+  contact:
+    email: apiteam@swagger.io
+  license:
+    name: Apache 2.0
+    url: http://www.apache.org/licenses/LICENSE-2.0.html
+  version: 1.0.0
+servers:
+- url: https://virtserver.swaggerhub.com/SwaggerPMTests/Pets-Adoption-API/1.0.0
+  description: SwaggerHub API Auto Mocking
+- url: http://localhost:80/api
+  description: Local Docker
+tags:
+- name: pets
+  description: Everything about your Pets
+- name: adoptions
+  description: Adoption information for pets in our stores
+paths:
+  /pets:
+    get:
+      tags:
+      - pets
+      summary: Get a list of pets within the store
+      description: A list of pets with information on their status and location
+      operationId: getPets
+      parameters:
+      - name: status
+        in: query
+        description: Status values that need to be considered for filter
+        required: false
+        style: form
+        explode: true
+        schema:
+          type: string
+          description: the adoption status of the pet
+          default: available
+          enum:
+          - available
+          - pending
+          - onhold
+          - adopted
+      - name: location
+        in: query
+        description: the store location of the pet
+        required: false
+        style: form
+        explode: true
+        schema:
+          type: string
+          example: Galway
+      responses:
+        "200":
+          description: Get Pets response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Pets'
+        default:
+          description: Get Pets response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Pets'
+    post:
+      tags:
+      - pets
+      summary: Add a new pet to the store
+      description: Add a new pet to the store
+      operationId: postPet
+      requestBody:
+        description: Create a new pet in the store
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Pet'
+        required: true
+      responses:
+        "201":
+          description: Pet Created Successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Pet'
+  /pets/{id}:
+    patch:
+      tags:
+      - pets
+      summary: Update the status of a pet
+      description: Use this operation to update the adoption status of a pet
+      operationId: patchPetStatus
+      parameters:
+      - name: id
+        in: path
+        description: The identifier for the path
+        required: true
+        style: simple
+        explode: false
+        schema:
+          type: string
+          example: a76b67cb-7976-4b94-af8e-381688c915ad
+      requestBody:
+        description: the new status information
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PetStatus'
+        required: true
+      responses:
+        "200":
+          description: Pet status updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Pet'
+        "404":
+          description: Pet not found
+  /adoptions:
+    get:
+      tags:
+      - adoptions
+      summary: Get a list of current pet adoptions
+      description: A list of adoptions with information on their status and pet
+      operationId: getAdoptions
+      parameters:
+      - name: status
+        in: query
+        description: Status values that need to be considered for filter
+        required: false
+        style: form
+        explode: true
+        schema:
+          type: string
+          description: the adoption status
+          enum:
+          - requested
+          - pending
+          - available
+          - denied
+          - approved
+      - name: location
+        in: query
+        description: the store location of the pet adoption
+        required: false
+        style: form
+        explode: true
+        schema:
+          type: string
+          example: Plett
+      responses:
+        "200":
+          description: Get Adoptions response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Adoptions'
+        default:
+          description: Get Adoptions response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Adoptions'
+    post:
+      tags:
+      - adoptions
+      summary: Add a new adoption
+      description: Add a new pet to the store
+      operationId: postAdoption
+      requestBody:
+        description: Create a new adoption request
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NewAdoption'
+        required: true
+      responses:
+        "201":
+          description: Pet Created Successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Adoption'
+  /adoptions/{id}:
+    patch:
+      tags:
+      - adoptions
+      summary: Update the status of an adoption
+      description: Use this operation to update the adoption status of an adoption
+      operationId: patchAdoptionStatus
+      parameters:
+      - name: id
+        in: path
+        description: The identifier for the path
+        required: true
+        style: simple
+        explode: false
+        schema:
+          type: string
+          example: a76b67cb-7976-4b94-af8e-381688c915ad
+      requestBody:
+        description: the new status information
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdoptionStatus'
+        required: true
+      responses:
+        "200":
+          description: Pet status updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Adoption'
+        "404":
+          description: Adoption not found
+components:
+  schemas:
+    Pet:
+      type: object
+      properties:
+        name:
+          type: string
+          description: the name of the pet
+          example: Rover
+        location:
+          type: string
+          description: the store location housing the pet
+          example: plett
+        id:
+          type: string
+          description: a _guid_ identifier of the pet
+          example: a76b67cb-7976-4b94-af8e-381688c915ad
+        status:
+          type: string
+          description: the adoption status of the pet
+          example: available
+          default: available
+          enum:
+          - available
+          - pending
+          - onhold
+          - adopted
+    Pets:
+      type: array
+      items:
+        $ref: '#/components/schemas/Pet'
+    PetStatus:
+      type: object
+      properties:
+        status:
+          type: string
+          description: the adoption status of the pet
+          example: available
+          default: available
+          enum:
+          - available
+          - pending
+          - onhold
+          - adopted
+    AdoptionReason:
+      type: object
+      properties:
+        petId:
+          type: string
+          description: the pet id
+        message:
+          type: string
+          description: a custom note providing some additional context about the reason for adopting the pet
+    Adoption:
+      type: object
+      properties:
+        id:
+          type: string
+          description: a _guid_ identifier of the adoption
+          example: a76b67cb-7976-4b94-af8e-381688c915ad
+        status:
+          type: string
+          description: the status of the adoption
+          example: requested
+          enum:
+          - requested
+          - pending
+          - available
+          - denied
+          - approved
+        pets:
+          type: array
+          items:
+            type: string
+        reasons:
+          type: array
+          items:
+            $ref: '#/components/schemas/AdoptionReason'
+    Adoptions:
+      type: array
+      items:
+        $ref: '#/components/schemas/Adoption'
+    NewAdoption:
+      type: object
+      properties:
+        pets:
+          type: array
+          description: the pets to be part of this adoption
+          items:
+            type: string
+        location:
+          type: string
+          description: the location of the pet adoption
+    AdoptionStatus:
+      type: object
+      properties:
+        status:
+          type: string
+          description: the adoption status of the pet
+          example: approved
+          enum:
+          - requested
+          - pending
+          - available
+          - denied
+          - approved

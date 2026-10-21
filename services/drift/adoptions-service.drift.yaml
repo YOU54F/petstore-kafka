@@ -1,0 +1,105 @@
+# yaml-language-server: $schema=https://download.pactflow.io/drift/schemas/drift.testcases.v1.schema.json
+drift-testcase-file: v1
+title: adoptions-service AsyncAPI conformance
+
+# Every operation in specs/asyncapi/adoptions-service.asyncapi.yaml, against the real pets-service and adoptions-service on a real
+# broker (harness.js, started by run-asyncapi.sh). asyncapi.lua sets up each case's provider state; for the send
+# operations, Drift subscribes to the topic, runs trigger.sh, and checks the first message the service publishes
+# there. For the receive operations, Drift publishes the message itself. Cases run in name order.
+
+sources:
+  - name: adoptions
+    path: ${env:DRIFT_SPEC_PATH}
+  - name: states
+    path: ./asyncapi.lua
+
+plugins:
+  - name: asyncapi
+  - name: kafka
+  - name: json
+
+operations:
+  onAdoptionRequested:
+    target: adoptions:onAdoptionRequested:adoptionRequested
+    description: An adoption request for an available pet, which adoptions-service marks requested.
+    parameters:
+      broker: ${env:KAFKA_BOOTSTRAP}
+      probe-topic: adoptions.statusChanged
+      payload:
+        id: 5b0c4e0e-6d1a-4f5e-9a51-1f3c2d7e8a04
+        pets: [5b0c4e0e-6d1a-4f5e-9a51-1f3c2d7e8a01]
+        location: Plett
+        adopterId: drift-adopter
+
+  onAdoptionStatusChanged_Denied:
+    target: adoptions:onAdoptionStatusChanged:adoptionStatusChanged
+    description: An available adoption is denied, which releases its pet on pets.statusChanged.
+    parameters:
+      broker: ${env:KAFKA_BOOTSTRAP}
+      probe-topic: pets.statusChanged
+      payload:
+        id: 5b0c4e0e-6d1a-4f5e-9a51-1f3c2d7e8a03
+        status: denied
+
+  onPetStatusChangedByAnyone:
+    target: adoptions:onPetStatusChanged:petStatusChanged
+    description: adoptions-service caches a pet's status.
+    parameters:
+      broker: ${env:KAFKA_BOOTSTRAP}
+      payload:
+        id: 5b0c4e0e-6d1a-4f5e-9a51-1f3c2d7e8a05
+        status: available
+
+  publishAdoptionRequested:
+    target: adoptions:publishAdoptionRequested:adoptionRequested
+    description: POST /api/adoptions requests an available pet.
+    parameters:
+      broker: ${env:KAFKA_BOOTSTRAP}
+    trigger:
+      executable-type: command
+      value: ${env:DRIFT_TRIGGER_HOOK}
+
+  publishAdoptionStatusChanged_Approved:
+    target: adoptions:publishAdoptionStatusChanged:adoptionStatusChanged
+    description: PATCH /api/adoptions/{id} approves an available adoption.
+    parameters:
+      broker: ${env:KAFKA_BOOTSTRAP}
+    trigger:
+      executable-type: command
+      value: ${env:DRIFT_TRIGGER_HOOK}
+
+  publishAdoptionStatusChanged_Requested:
+    target: adoptions:publishAdoptionStatusChanged:adoptionStatusChanged
+    description: A new adoption request is marked requested.
+    parameters:
+      broker: ${env:KAFKA_BOOTSTRAP}
+    trigger:
+      executable-type: command
+      value: ${env:DRIFT_TRIGGER_HOOK}
+
+  publishPetAdoptionStatusChanged_Adopted:
+    target: adoptions:publishPetAdoptionStatusChanged:petAdoptionStatusChanged
+    description: Approving an adoption claims its pet, with the adopter's id.
+    parameters:
+      broker: ${env:KAFKA_BOOTSTRAP}
+    trigger:
+      executable-type: command
+      value: ${env:DRIFT_TRIGGER_HOOK}
+
+  publishPetAdoptionStatusChanged_OnHold:
+    target: adoptions:publishPetAdoptionStatusChanged:petAdoptionStatusChanged
+    description: A request for an available pet puts it on hold.
+    parameters:
+      broker: ${env:KAFKA_BOOTSTRAP}
+    trigger:
+      executable-type: command
+      value: ${env:DRIFT_TRIGGER_HOOK}
+
+  publishPetAdoptionStatusChanged_Released:
+    target: adoptions:publishPetAdoptionStatusChanged:petAdoptionStatusChanged
+    description: Denying an adoption makes its pet available again.
+    parameters:
+      broker: ${env:KAFKA_BOOTSTRAP}
+    trigger:
+      executable-type: command
+      value: ${env:DRIFT_TRIGGER_HOOK}

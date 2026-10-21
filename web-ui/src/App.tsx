@@ -9,8 +9,8 @@ import usePetsStore from './pets.store'
 import {connect as wsConnect, onMessage } from './websocket'
 
 const CONFIGS = {
-  // Issues with websocket + cra proxy + caddy. Requires me to add this env variable to override it more naturally.
-  websocketUrl: process.env.REACT_APP_WEBSOCKET_HOST || relativeWebsocketUrl('/websocket'),
+  // Set VITE_WEBSOCKET_HOST to point the console straight at a websocket service.
+  websocketUrl: import.meta.env.VITE_WEBSOCKET_HOST || relativeWebsocketUrl('/websocket'),
   petsUrl: '/api',
   adoptionsUrl: '/api',
 }

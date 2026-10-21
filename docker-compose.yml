@@ -1,94 +1,79 @@
-version: "2"
+# The whole stack. `docker compose up --build`, then open http://localhost:8080
+# Just Kafka, for `make dev`: `docker compose up kafka`
+# Behind a TLS-intercepting proxy, add the CA overlay for the image builds:
+#   CA_PEM="$(cat /path/to/bundle.pem)" docker compose -f docker-compose.yml -f docker-compose.ca.yml up --build
+name: petstore-kafka
 
-## NOTE NOTE! 
-# Because kafka needs to know it's own hostname, you either need to change it in this document (from kafka.local)
-## Or add kafka.local to your /etc/hosts file (and point it at 127.0.0.1).
+x-service: &service
+  restart: unless-stopped
+  environment: &service-env
+    KAFKA_HOSTS: kafka:29092
+    DATA_BASEPATH: /data
+    KAFKAJS_NO_PARTITIONER_WARNING: "1"
+  depends_on:
+    kafka:
+      condition: service_healthy
 
 services:
-
-  # Main frontend
-  # Expose port with `- {PORT}:80` (i.e., your port goes on the left).
+  # SPA + Caddy gateway
   web-ui:
-    image: ponelat/petstore-kafka-web-ui:latest
-    restart: always
+    build: web-ui
+    restart: unless-stopped
     ports:
-      - "80:80"
+      - "8080:80"
     environment:
       CADDY_PORT: 80
-      PETS_HOST: "http://pets:80"
-      ADOPTIONS_HOST: "http://adoptions:80"
-      WEBSOCKET_HOST: "http://websocket:81"
+      PETS_HOST: http://pets:80
+      ADOPTIONS_HOST: http://adoptions:80
+      WEBSOCKET_HOST: http://websocket:80
+    depends_on: [pets, adoptions, websocket]
 
-  # Secondary frontend, a CMAK app for looking at the Kafka cluster
-  # Note: You'll need to create a Cluster via its UI. Be sure to add 'zookeeper:2181' as the zookeeper host.
-  cmak:
-      image: ghcr.io/eshepelyuk/dckr/cmak-3.0.0.5:latest
-      restart: always
-      ports:
-        - "9000:9000"
-      environment:
-        ZK_HOSTS: "zookeeper:2181"
-      depends_on:
-        - zookeeper
-        - kafka
-
-  # Application Services
   pets:
-    image: ponelat/petstore-kafka-pets:latest
-    restart: always
-    environment:
-      KAFKA_HOSTS: "kafka:9092"
-      DATA_BASEPATH: "/data"
-    volumes:
-      - "pets_data:/data"
+    <<: *service
+    build: { context: services, args: { SERVICE: pets } }
+    ports: ["3100:80"]
+    volumes: ["pets_data:/data"]
 
   adoptions:
-    image: ponelat/petstore-kafka-adoptions:latest
-    restart: always
-    environment:
-      KAFKA_HOSTS: "kafka:9092"
-      DATA_BASEPATH: "/data"
-    volumes:
-      - "adoptions_data:/data"
+    <<: *service
+    build: { context: services, args: { SERVICE: adoptions } }
+    ports: ["3200:80"]
+    volumes: ["adoptions_data:/data"]
 
   websocket:
-    image: ponelat/petstore-kafka-websocket:latest
-    restart: always
-    environment:
-      KAFKA_HOSTS: "kafka:9092"
-      DATA_BASEPATH: "/data"
-    volumes:
-      - "websocket_data:/data"
+    <<: *service
+    build: { context: services, args: { SERVICE: websocket } }
+    ports: ["3300:80"]
+    volumes: ["websocket_data:/data"]
 
-
-  # Kafka services
-  zookeeper:
-    image: docker.io/bitnami/zookeeper:3.8
-    volumes:
-      - "zookeeper_data:/bitnami"
-    environment:
-      - ALLOW_ANONYMOUS_LOGIN=yes
+  # Kafka in KRaft mode (no ZooKeeper). Containers use kafka:29092, the host uses localhost:9092.
   kafka:
-    image: docker.io/bitnami/kafka:3.2
-    volumes:
-      - "kafka_data:/bitnami"
+    image: apache/kafka:3.9.1
     ports:
       - "9092:9092"
     environment:
-      - KAFKA_CFG_ZOOKEEPER_CONNECT=zookeeper:2181
-      - ALLOW_PLAINTEXT_LISTENER=yes
-    hostname: kafka.local
-    depends_on:
-      - zookeeper
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:29092,EXTERNAL://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,EXTERNAL://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:29092 --list >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
 
 volumes:
-  zookeeper_data:
-    driver: local
   kafka_data:
-    driver: local
   pets_data:
-    driver: local
   adoptions_data:
-    driver: local
   websocket_data:
-    driver: local

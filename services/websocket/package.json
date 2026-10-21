@@ -1,22 +1,16 @@
 {
-	"name": "web-api-rest",
-	"scripts": {
-		"start": "node ./index.js",
-		"dev": "nodemon ./index.js"
-	},
-	"version": "1.0.0",
-	"main": "index.js",
-	"license": "MIT",
-	"dependencies": {
-		"body-parser": "^1.20.3",
-		"cors": "^2.8.5",
-		"express": "^4.22.0",
-		"kafkajs": "^2.0.2",
-		"morgan": "^1.11.0",
-		"uuid": "^14.0.0",
-		"ws": "^8.21.0"
-	},
-	"devDependencies": {
-		"nodemon": "^2.0.16"
-	}
+  "name": "websocket",
+  "version": "1.0.0",
+  "private": true,
+  "main": "index.js",
+  "license": "MIT",
+  "scripts": {
+    "start": "node ./index.js",
+    "dev": "nodemon ./index.js"
+  },
+  "dependencies": {
+    "kafkajs": "2.2.4",
+    "lib": "1.0.0",
+    "ws": "8.22.0"
+  }
 }

@@ -1,12 +1,8 @@
-const express = require('express')
-const path = require('path')
-const cors = require('cors')
-const app = express()
-const bodyParser = require('body-parser')
-const uuid = require('uuid')
-const morgan = require('morgan')
-const { Kafka, logLevel } = require('kafkajs')
-const { KafkaSink, KafkaLogger, KafkaStream, FlatDB: { queryObjToMatchQuery } } = require('../lib')
+const { Kafka, logLevel, Partitioners } = require('kafkajs')
+const { KafkaSink, KafkaLogger, KafkaStream } = require('../lib')
+const { createApp } = require('./service')
+const { petsCacheProcessor } = require('./processor')
+const { petStatusChanged, toRecord } = require('./messages')
 
 // Configs
 const KAFKA_HOSTS = (process.env.KAFKA_HOSTS || 'localhost:9092').split(',').map(s => s.trim())
@@ -26,109 +22,37 @@ const kafka = new Kafka({
     retries: 16
   }
 })
-
-const consumers = []
-const producer = kafka.producer()
+const producer = kafka.producer({ createPartitioner: Partitioners.DefaultPartitioner })
 producer.connect()
 
-// Consume kafka
 const petsCache = new KafkaSink({
   kafka,
   basePath: DATA_BASEPATH,
   name: 'pets-cache',
   topics: ['pets.added', 'pets.statusChanged'],
   onLog: ({log, topic, sink}) => {
-
-    if(topic === 'pets.added') {
-      console.log(`Adding pet to disk: ${log.id} - ${log.name}`)
-      sink.db.dbPut(log.id, {...log, status: 'pending'})
-      return 
-    }
-
-    if(topic === 'pets.statusChanged') {
-      console.log(`Updating pet status to disk: ${log.id} - ${log.status}`)
-      // Save to DB with new status
-      sink.db.dbMerge(log.id, {status: log.status})
-      return 
-    }
+    petsCacheProcessor({log, topic, db: sink.db})
   }
 })
 
-new KafkaStream({
+const petsStream = new KafkaStream({
   kafka,
   name: 'pets-stream',
   topics: ['pets.added'],
   onLog: async ({ log }) => {
     console.log(`Pet added, producing pets.statusChanged ${log.id} - available`)
-    producer.send({
-      topic: 'pets.statusChanged',
-      messages: [
-        { value: JSON.stringify({ ...log, status: 'available'}) },
-      ],
-    })
+    await producer.send(toRecord(petStatusChanged(log, 'available')))
   }
 })
 
-// ---------------------------------------------------------------
-// Rest
-app.use(morgan('short'))
-app.use(cors())
-app.use(bodyParser.json())
-
-app.get('/api/pets', (req, res) => {
-  const { location, status } = req.query
-
-  if(!location && !status) {
-    return res.json(petsCache.db.dbGetAll())
-  }
-
-  let query = queryObjToMatchQuery({ status, location })
-  return res.json(petsCache.db.dbQuery(query))
-})
-
-app.post('/api/pets', (req, res) => {
-  const pet = req.body
-  pet.id = pet.id || uuid.v4()
-
-  producer.send({
-    topic: 'pets.added',
-    messages: [
-      { value: JSON.stringify(pet) },
-    ],
-  })
-
-  res.status(201).send(pet)
-})
-
-app.patch('/api/pets/:id', (req, res) => {
-  const pet = petsCache.db.dbGet(req.params.id)
-  const { status } = req.body
-  if(!pet)
-    res.status(400).json({
-      message: 'Pet not found, cannot patch.'
-    })
-
-  const updatedPet = {...pet, status }
-
-  producer.send({
-    topic: 'pets.statusChanged',
-    messages: [
-      { value: JSON.stringify(updatedPet) },
-    ],
-  })
-
-  res.status(201).send(updatedPet)
-})
-
-// // SPA
-// app.use(express.static(path.resolve(__dirname, process.env.SPA_PATH || '../web-ui/build')))
-
+const consumers = [petsCache.consumer, petsCache.admin, petsStream.consumer]
 
 // ---------------------------------------------------------------------------------------
 // Boring stuff follows...
 // ---------------------------------------------------------------------------------------
 
 // Start server and handle logic around graceful exit
+const app = createApp({ producer, db: petsCache.db })
 const server = app.listen(process.env.NODE_PORT || 3100, () => {
   console.log('Server listening on http://' + server.address().address + ':' + server.address().port)
 })
@@ -154,7 +78,6 @@ errorTypes.forEach(type => {
   })
 })
 
-
 signalTraps.forEach(type => {
   process.once(type, async () => {
     try {
@@ -165,9 +88,8 @@ signalTraps.forEach(type => {
   })
 })
 
-
 async function shutdown() {
-  await Promise.all(consumers.map(consumer => consumer.disconnect()))
+  await Promise.all([producer, ...consumers].map(client => client.disconnect()))
 
   server.close(() => {
     console.log('Closed out remaining connections');
@@ -182,4 +104,3 @@ async function shutdown() {
   connections.forEach(curr => curr.end());
   setTimeout(() => connections.forEach(curr => curr.destroy()), 5000);
 }
-

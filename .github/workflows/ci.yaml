@@ -1,5 +1,14 @@
-# Petstore Kafka CI (Gitea Actions, GitHub Actions syntax). Gitea reads .gitea/workflows in preference to .github/workflows.
+# Petstore Kafka CI, for both GitHub Actions and Gitea Actions (Gitea reads .github/workflows too, as long as there is
+# no .gitea/workflows, which would take precedence). Where the two differ, the workflow tells them apart with
+# github.server_url == 'https://github.com':
+#   - matrices: GitHub has no matrix context in a job's `if`, so the `lanes` job turns the repo variables into the
+#     list of broker lanes each matrix runs, and jobs with no lane are skipped
+#   - Kafka: on Gitea the service container shares the job's network namespace (and Docker rejects published ports);
+#     on GitHub the job runs on the VM, so asyncapi starts its own Kafka on the host network
+#   - concurrency: the asyncapi queue is only needed on Gitea (shared ports); GitHub runners are isolated, and queueing
+#     there would cancel other runs' pending asyncapi jobs
 #
+
 # Contract tests: adoptions-service and websocket-service consume pets-service's Kafka messages, and web-ui consumes its
 # REST API. adoptions-service is also a provider: petstore-inc's notifications consumes the pets.statusChanged messages
 # it sends, with the adopter's id. Each provider's messages are a pacticipant of their own, pets-service-events and
@@ -47,13 +56,37 @@ env:
   PACT_DO_NOT_TRACK: "true"
 
 jobs:
+  # Which broker lanes run: oss when a Pact Broker is configured (the services and verify jobs run it regardless, to
+  # work without a broker), pactflow when enabled.
+  lanes:
+    name: Broker lanes
+    runs-on: ubuntu-latest
+    outputs:
+      all: ${{ steps.lanes.outputs.all }}
+      gated: ${{ steps.lanes.outputs.gated }}
+    steps:
+      - id: lanes
+        env:
+          OSS_URL: ${{ vars.PACT_BROKER_BASE_URL }}
+          PACTFLOW_ENABLED: ${{ vars.PACTFLOW_ENABLED }}
+        run: |
+          # all: every job runs the oss lane; gated: only lanes with a broker to talk to (can-i-deploy, deploy)
+          all='"oss"'; gated=''
+          [ -z "$OSS_URL" ] || gated='"oss"'
+          if [ "$PACTFLOW_ENABLED" = true ]; then
+            all="$all,\"pactflow\""
+            gated="${gated:+$gated,}\"pactflow\""
+          fi
+          echo "all=[$all]" >> "$GITHUB_OUTPUT"
+          echo "gated=[$gated]" >> "$GITHUB_OUTPUT"
+
   services:
     name: Services (unit tests, consumer pacts)${{ matrix.broker == 'pactflow' && ' · PactFlow' || '' }}
     runs-on: ubuntu-latest
-    if: ${{ matrix.broker == 'oss' || vars.PACTFLOW_ENABLED == 'true' }}
+    needs: [lanes]
     strategy:
       matrix:
-        broker: [oss, pactflow]
+        broker: ${{ fromJSON(needs.lanes.outputs.all) }}
     env:
       PACT_BROKER_BASE_URL: ${{ matrix.broker == 'pactflow' && vars.PACTFLOW_BASE_URL || vars.PACT_BROKER_BASE_URL }}
       PACT_BROKER_TOKEN: ${{ matrix.broker == 'pactflow' && secrets.PACTFLOW_TOKEN || secrets.PACT_BROKER_TOKEN }}
@@ -76,7 +109,7 @@ jobs:
         run: |   # pacts are committed so other repos (petstore-inc's franchisee job) can verify against them by SHA
           git diff --exit-code -- services/pacts
           [ -z "$(git ls-files --others --exclude-standard -- services/pacts)" ] || { echo "untracked pacts: commit them"; exit 1; }
-      - uses: actions/upload-artifact@v3   # v4 isn't supported by Gitea's artifact server
+      - uses: actions/upload-artifact@v4
         with:
           name: pacts-services-${{ matrix.broker }}
           path: services/pacts
@@ -90,10 +123,10 @@ jobs:
   web-ui:
     name: web-ui (typecheck, build, consumer pact)${{ matrix.broker == 'pactflow' && ' · PactFlow' || '' }}
     runs-on: ubuntu-latest
-    if: ${{ matrix.broker == 'oss' || vars.PACTFLOW_ENABLED == 'true' }}
+    needs: [lanes]
     strategy:
       matrix:
-        broker: [oss, pactflow]
+        broker: ${{ fromJSON(needs.lanes.outputs.all) }}
     env:
       PACT_BROKER_BASE_URL: ${{ matrix.broker == 'pactflow' && vars.PACTFLOW_BASE_URL || vars.PACT_BROKER_BASE_URL }}
       PACT_BROKER_TOKEN: ${{ matrix.broker == 'pactflow' && secrets.PACTFLOW_TOKEN || secrets.PACT_BROKER_TOKEN }}
@@ -116,7 +149,7 @@ jobs:
         run: |   # pacts are committed so other repos (petstore-inc's franchisee job) can verify against them by SHA
           git diff --exit-code -- web-ui/pacts
           [ -z "$(git ls-files --others --exclude-standard -- web-ui/pacts)" ] || { echo "untracked pacts: commit them"; exit 1; }
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         with:
           name: pacts-web-ui-${{ matrix.broker }}
           path: web-ui/pacts
@@ -130,11 +163,10 @@ jobs:
   verify:
     name: Verify pets-service(-events) and adoptions-service-events (REST + Kafka messages)${{ matrix.broker == 'pactflow' && ' · PactFlow' || '' }}
     runs-on: ubuntu-latest
-    needs: [services, web-ui]
-    if: ${{ matrix.broker == 'oss' || vars.PACTFLOW_ENABLED == 'true' }}
+    needs: [lanes, services, web-ui]
     strategy:
       matrix:
-        broker: [oss, pactflow]
+        broker: ${{ fromJSON(needs.lanes.outputs.all) }}
     env:
       PACT_BROKER_BASE_URL: ${{ matrix.broker == 'pactflow' && vars.PACTFLOW_BASE_URL || vars.PACT_BROKER_BASE_URL }}
       PACT_BROKER_TOKEN: ${{ matrix.broker == 'pactflow' && secrets.PACTFLOW_TOKEN || secrets.PACT_BROKER_TOKEN }}
@@ -148,11 +180,11 @@ jobs:
           cache: npm
           cache-dependency-path: services/package-lock.json
       # Used only without a broker; with one, the verifier fetches pacts by consumer version selectors.
-      - uses: actions/download-artifact@v3
+      - uses: actions/download-artifact@v4
         with:
           name: pacts-services-${{ matrix.broker }}
           path: services/pacts
-      - uses: actions/download-artifact@v3
+      - uses: actions/download-artifact@v4
         with:
           name: pacts-web-ui-${{ matrix.broker }}
           path: web-ui/pacts
@@ -180,14 +212,14 @@ jobs:
   asyncapi:
     name: AsyncAPI (pacts vs specs, Drift)${{ matrix.broker == 'pactflow' && ' · PactFlow' || '' }}
     runs-on: ubuntu-latest
-    if: ${{ matrix.broker == 'oss' || vars.PACTFLOW_ENABLED == 'true' }}
+    needs: [lanes]
     strategy:
       fail-fast: false
       matrix:
-        broker: [oss, pactflow]
-    # This lane's ports, one run at a time (see Concurrency above).
+        broker: ${{ fromJSON(needs.lanes.outputs.all) }}
+    # This lane's ports, one run at a time on Gitea (see Concurrency above). On GitHub every run gets its own group.
     concurrency:
-      group: ${{ github.repository }}-asyncapi-${{ matrix.broker }}
+      group: ${{ github.server_url == 'https://github.com' && github.run_id || github.repository }}-asyncapi-${{ matrix.broker }}
       cancel-in-progress: false
     env:
       PACT_BROKER_BASE_URL: ${{ matrix.broker == 'pactflow' && vars.PACTFLOW_BASE_URL || vars.PACT_BROKER_BASE_URL }}
@@ -197,7 +229,9 @@ jobs:
       GIT_SHA: ${{ github.sha }}
       GIT_BRANCH: ${{ github.head_ref || github.ref_name }}
     # A throwaway broker for Drift. Service containers share the job's network namespace on Gitea, so the job reaches
-    # it on localhost, and each lane gets its own ports (clear of petstore-inc's 19092-19095).
+    # it on localhost, and each lane gets its own ports (clear of petstore-inc's 19092-19095). On GitHub the job runs on
+    # the VM and can't reach it: the first step starts a Kafka on the host network there instead (Gitea rejects published
+    # ports on service containers, and a `ports:` expression that is empty on Gitea doesn't parse there).
     services:
       kafka:
         image: apache/kafka:3.9.1
@@ -213,6 +247,22 @@ jobs:
           KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
           KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
     steps:
+      - name: Start Kafka on the host network (GitHub)
+        if: ${{ github.server_url == 'https://github.com' }}
+        env:
+          PORT: ${{ matrix.broker == 'pactflow' && '19194' || '19192' }}
+          CTRL: ${{ matrix.broker == 'pactflow' && '19195' || '19193' }}
+        run: |
+          docker run -d --name kafka-host --network host \
+            -e KAFKA_NODE_ID=1 -e KAFKA_PROCESS_ROLES=broker,controller \
+            -e "KAFKA_LISTENERS=PLAINTEXT://:$PORT,CONTROLLER://:$CTRL" \
+            -e "KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://localhost:$PORT" \
+            -e KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT \
+            -e KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER \
+            -e "KAFKA_CONTROLLER_QUORUM_VOTERS=1@localhost:$CTRL" \
+            -e KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1 \
+            -e KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=1 -e KAFKA_TRANSACTION_STATE_LOG_MIN_ISR=1 \
+            apache/kafka:3.9.1
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
@@ -244,7 +294,7 @@ jobs:
         run: bash services/drift/run-asyncapi.sh
       - name: Upload Drift AsyncAPI results
         if: ${{ always() && vars.PACTFLOW_ENABLED == 'true' }}
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: petstore-kafka-drift-asyncapi-${{ matrix.broker }}
           path: ${{ runner.temp }}/petstore-kafka-drift-asyncapi/
@@ -254,12 +304,12 @@ jobs:
   can-i-deploy:
     name: Pact can-i-deploy (${{ matrix.pacticipant }})${{ matrix.broker == 'pactflow' && ' · PactFlow' || '' }}
     runs-on: ubuntu-latest
-    needs: [verify, asyncapi]
-    if: ${{ ((matrix.broker == 'oss' && vars.PACT_BROKER_BASE_URL != '') || (matrix.broker == 'pactflow' && vars.PACTFLOW_ENABLED == 'true')) && !(github.event_name == 'push' && github.ref == 'refs/heads/main') }}
+    needs: [lanes, verify, asyncapi]
+    if: ${{ needs.lanes.outputs.gated != '[]' && !(github.event_name == 'push' && github.ref == 'refs/heads/main') }}
     strategy:
       fail-fast: false
       matrix:
-        broker: [oss, pactflow]
+        broker: ${{ fromJSON(needs.lanes.outputs.gated) }}
         pacticipant: [pets-service, pets-service-events, adoptions-service, adoptions-service-events, websocket-service, web-ui]
     env:
       PACT_BROKER_BASE_URL: ${{ matrix.broker == 'pactflow' && vars.PACTFLOW_BASE_URL || vars.PACT_BROKER_BASE_URL }}
@@ -288,12 +338,12 @@ jobs:
   deploy:
     name: Record deployments to local${{ matrix.broker == 'pactflow' && ' · PactFlow' || '' }}
     runs-on: ubuntu-latest
-    needs: [verify, asyncapi]
-    if: ${{ ((matrix.broker == 'oss' && vars.PACT_BROKER_BASE_URL != '') || (matrix.broker == 'pactflow' && vars.PACTFLOW_ENABLED == 'true')) && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    needs: [lanes, verify, asyncapi]
+    if: ${{ needs.lanes.outputs.gated != '[]' && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
     strategy:
       fail-fast: false
       matrix:
-        broker: [oss, pactflow]
+        broker: ${{ fromJSON(needs.lanes.outputs.gated) }}
     env:
       PACT_BROKER_BASE_URL: ${{ matrix.broker == 'pactflow' && vars.PACTFLOW_BASE_URL || vars.PACT_BROKER_BASE_URL }}
       PACT_BROKER_TOKEN: ${{ matrix.broker == 'pactflow' && secrets.PACTFLOW_TOKEN || secrets.PACT_BROKER_TOKEN }}
